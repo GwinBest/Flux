@@ -1,0 +1,7 @@
+.DS_Store
+CMakeSettings.json
+
+/[Bb]uild
+/.vscode
+/.vs
+/.idea
