@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <expected>
 #include <thread>
 #include <vector>
 
@@ -27,8 +28,8 @@ namespace Flux
 
         ~IoContextPool();
 
-        auto Run() -> void;
-        auto Stop() -> void;
+        auto Run() -> std::expected<bool, std::string>;
+        auto Stop() -> std::expected<bool, std::string>;
 
         [[nodiscard]] auto GetIoContext() const noexcept -> const IoContext& { return _ioContext; }
 
@@ -51,8 +52,9 @@ namespace Flux
 
         std::vector<std::jthread> _threads;
         std::size_t _threadCount = std::thread::hardware_concurrency();
+        std::mutex _mutex;
 
-        Status _status = Status::NotInitialized;
+        std::atomic<Status> _status = Status::NotInitialized;
     };
 
 }   // namespace Flux

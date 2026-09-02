@@ -1,4 +1,5 @@
 find_package(Boost CONFIG QUIET COMPONENTS asio uuid)
+find_package(spdlog CONFIG QUIET)
 
 if (Boost_FOUND)
     set(BOOST_ASIO_TARGET Boost::asio)
@@ -17,6 +18,20 @@ else ()
     set(BOOST_UUID_TARGET boost_uuid)
 endif ()
 
+if (spdlog_FOUND)
+    set(SPDLOG_TARGET spdlog::spdlog)
+else ()
+    include(FetchContent)
+
+    FetchContent_Declare(spdlog
+            URL https://github.com/gabime/spdlog/archive/refs/tags/v1.17.0.tar.gz
+            DOWNLOAD_EXTRACT_TIMESTAMP ON
+            SYSTEM
+    )
+    FetchContent_MakeAvailable(spdlog)
+    set(SPDLOG_TARGET spdlog::spdlog)
+endif ()
+
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
         "*.cpp"
         "*.hpp"
@@ -24,7 +39,10 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
 
 add_library(${PROJECT_NAME} ${SOURCES})
 
-target_link_libraries(${PROJECT_NAME} PUBLIC ${BOOST_ASIO_TARGET} ${BOOST_UUID_TARGET})
+target_link_libraries(${PROJECT_NAME}
+        PUBLIC ${BOOST_ASIO_TARGET} ${BOOST_UUID_TARGET}
+        PRIVATE ${SPDLOG_TARGET}
+)
 
 if (WIN32)
     target_link_libraries(${PROJECT_NAME} PUBLIC ws2_32 mswsock)
