@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-#include <spdlog/spdlog.h>
+#include "../Utils/Log.hpp"
 
 namespace Flux
 {
@@ -13,37 +13,29 @@ namespace Flux
         , _status(Status::Started)
     {
         _threads.reserve(_threadCount);
-        spdlog::debug("IoContextPool initialized with {} worker thread(s)", _threadCount);
+        Log::DebugLog(Log::Format("Initialized io_context pool with workers={}", _threadCount));
     }
 
     IoContextPool::~IoContextPool()
     {
-        _ioContext.stop();
+        _ioContext.stop();   // Hard stop
 
-        if (_status == Status::Running)
-        {
-            if (const auto stopResult = Stop(); !stopResult.has_value())
-                spdlog::error("Failed to stop IoContextPool from destructor: {}",
-                              stopResult.error());
-        }
+        if (const auto stopResult = Stop(); !stopResult.has_value())
+            Log::ErrorLog(Log::Format("Destructor failed to stop io_context pool: {}",
+                                      stopResult.error().message()));
     }
 
-    auto IoContextPool::Run() -> std::expected<bool, std::string>
+    auto IoContextPool::Run() -> Result
     {
-        const std::scoped_lock lock(_mutex);
-
         if (_status != Status::Started)
         {
-            spdlog::warn("IoContextPool run rejected: status is not Started");
-            return std::unexpected(
-                "IoContextPool::Run(): IO context pool status is not Status::Started");
+            Log::WarnLog("Run rejected: io_context pool is not in Started state");
+            return std::unexpected(MakeErrorCode(Error::IoContextPoolNotStarted));
         }
-
-        spdlog::info("Starting IoContextPool with {} worker thread(s)", _threadCount);
 
         for (std::size_t i = 0; i < _threadCount; ++i)
         {
-            _threads.emplace_back([this] -> void {
+            _threads.emplace_back([this, workerIndex = i] -> void {
                 while (!_ioContext.stopped())
                 {
                     try
@@ -52,39 +44,48 @@ namespace Flux
                     }
                     catch (const std::exception& e)
                     {
-                        spdlog::error("IoContextPool handler threw exception: {}", e.what());
+                        Log::ErrorLog(
+                            Log::Format("io_context handler threw exception on worker index={}: {}",
+                                        workerIndex,
+                                        e.what()));
+                    }
+                    catch (...)
+                    {
+                        Log::ErrorLog(Log::Format(
+                            "io_context handler threw unknown exception on worker index={}",
+                            workerIndex));
                     }
                 }
+
+                Log::DebugLog(Log::Format("io_context worker stopped: index={}", workerIndex));
             });
         }
 
         _status = Status::Running;
-        spdlog::info("IoContextPool started");
 
-        return true;
+        Log::InfoLog(Log::Format("io_context pool started with workers={}", _threadCount));
+
+        return {};
     }
 
-    auto IoContextPool::Stop() -> std::expected<bool, std::string>
+    auto IoContextPool::Stop() -> Result
     {
-        const std::scoped_lock lock(_mutex);
-
         if (_status != Status::Running)
         {
-            spdlog::warn("IoContextPool stop rejected: status is not Running");
-            return std::unexpected(
-                "IoContextPool::Stop():IO context pool status is not Status::Running");
+            Log::WarnLog("Stop rejected: io_context pool is not in Running state");
+            return std::unexpected(MakeErrorCode(Error::IoContextPoolNotRunning));
         }
 
         if (std::ranges::any_of(_threads, [](const std::jthread& thread) -> bool {
                 return thread.get_id() == std::this_thread::get_id();
             }))
         {
-            spdlog::error("IoContextPool stop rejected from an IO worker thread");
-            return std::unexpected(
-                "IoContextPool::Stop(): cannot be called from an IO worker thread");
+            Log::ErrorLog("Stop rejected: called from an io_context worker thread");
+            return std::unexpected(MakeErrorCode(Error::IoContextPoolStopFromWorkerThread));
         }
 
-        spdlog::info("Stopping IoContextPool");
+        Log::InfoLog(Log::Format("Stopping io_context pool with workers={}", _threads.size()));
+
         _workGuard.reset();
 
         for (auto& thread : _threads)
@@ -94,8 +95,9 @@ namespace Flux
         }
 
         _status = Status::Stopped;
-        spdlog::info("IoContextPool stopped");
 
-        return true;
+        Log::InfoLog("io_context pool stopped");
+
+        return {};
     }
 }   // namespace Flux

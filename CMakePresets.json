@@ -13,10 +13,9 @@
       "binaryDir": "${sourceDir}/Build/Debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_CXX_FLAGS": "--coverage",
-        "CMAKE_C_FLAGS": "--coverage",
         "BUILD_DEMO": "ON",
-        "BUILD_TEST": "ON"
+        "BUILD_TEST": "ON",
+        "ENABLE_COVERAGE": "ON"
       }
     },
     {

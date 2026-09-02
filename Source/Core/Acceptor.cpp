@@ -1,82 +1,157 @@
 #include "Acceptor.hpp"
 
 #include <boost/asio/error.hpp>
-#include <spdlog/spdlog.h>
+#include <boost/system/system_error.hpp>
+
+#include "../Utils/Log.hpp"
 
 namespace Flux
 {
     Acceptor::~Acceptor() noexcept
     {
-        if (const auto error = StopAccepting())
-            spdlog::error("Failed to stop acceptor from destructor: {}", error.message());
+        if (const auto stopResult = StopAccepting(); !stopResult)
+            Log::ErrorLog(Log::Format("Destructor failed to stop acceptor: {}",
+                                      stopResult.error().message()));
     }
 
     auto Acceptor::CreateAcceptor(const IoContextPool::Strand& strand,
                                   const boost::asio::ip::tcp::endpoint& endpoint)
-        -> std::shared_ptr<Acceptor>
+        -> std::expected<std::shared_ptr<Acceptor>, ErrorCode>
     {
-        return std::shared_ptr<Acceptor>(new Acceptor(strand, endpoint));
+        auto acceptor = std::shared_ptr<Acceptor>(new Acceptor(strand));
+
+        if (const auto openResult = acceptor->Open(endpoint); !openResult)
+            return std::unexpected(openResult.error());
+
+        return acceptor;
     }
 
-    auto Acceptor::StartAccepting() -> std::expected<bool, std::string>
+    auto Acceptor::StartAccepting() -> Result
     {
-        const std::scoped_lock lock(_mutex);
-
         if (_status != Status::Initialized)
         {
-            spdlog::warn("Acceptor start rejected: status is not Initialized");
-            return std::unexpected(
-                "Acceptor::StartAccepting(): Acceptor status is not Status::Initialized");
+            Log::WarnLog("Start rejected: acceptor is not initialized");
+            return std::unexpected(MakeErrorCode(Error::AcceptorNotInitialized));
         }
 
         _status = Status::Started;
-        spdlog::info("Acceptor started accepting connections");
+
+        Log::InfoLog("Acceptor started accepting connections");
 
         DoAccept();
 
-        return true;
+        return {};
     }
 
-    auto Acceptor::StopAccepting() noexcept -> boost::system::error_code
+    auto Acceptor::StopAccepting() noexcept -> Result
     {
-        const std::scoped_lock lock(_mutex);
+        ErrorCode firstError;
+
+        if (const auto currentStatus = _status.load();
+            currentStatus == Status::Stopped || currentStatus == Status::NotInitialized)
+            return {};
 
         _status = Status::Stopped;
 
-        boost::system::error_code errorCode;
+        std::size_t cancelledTimers = 0U;
 
-        _retryTimer.cancel();
+        try
+        {
+            cancelledTimers = _retryTimer.cancel();
+        }
+        catch (const boost::system::system_error& error)
+        {
+            firstError = error.code();
+            Log::WarnLog(
+                Log::Format("Failed to cancel acceptor retry timer: {}", error.code().message()));
+        }
 
         if (_acceptor.is_open())
         {
+            ErrorCode errorCode;
             errorCode = _acceptor.close(errorCode);
             if (errorCode)
-                spdlog::error("Failed to stop acceptor: {}", errorCode.message());
+            {
+                if (!firstError)
+                    firstError = errorCode;
+
+                Log::ErrorLog(Log::Format("Failed to close acceptor: {}", errorCode.message()));
+            }
             else
-                spdlog::info("Acceptor stopped");
+            {
+                Log::InfoLog(
+                    Log::Format("Acceptor stopped; cancelled_retry_timers={}", cancelledTimers));
+            }
         }
         else
         {
-            spdlog::debug("Acceptor stop requested while socket is already closed");
+            Log::DebugLog("Acceptor stop requested while socket is already closed");
         }
 
-        return errorCode;
+        if (firstError)
+            return std::unexpected(firstError);
+
+        return {};
     }
 
-    Acceptor::Acceptor(const IoContextPool::Strand& strand,
-                       const boost::asio::ip::tcp::endpoint& endpoint)
+    Acceptor::Acceptor(const IoContextPool::Strand& strand)
         : _acceptor(strand)
         , _retryTimer(strand)
-        , _status(Status::Initialized)
-    {
-        _acceptor.open(endpoint.protocol());
-        _acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
-        _acceptor.bind(endpoint);
-        _acceptor.listen();
+    {}
 
-        spdlog::info("Acceptor is listening on {}:{}",
-                     endpoint.address().to_string(),
-                     endpoint.port());
+    auto Acceptor::Open(const boost::asio::ip::tcp::endpoint& endpoint) noexcept -> Result
+    {
+        ErrorCode errorCode;
+
+        errorCode = _acceptor.open(endpoint.protocol(), errorCode);
+        if (errorCode)
+        {
+            Log::ErrorLog(Log::Format("Failed to open acceptor: endpoint={}:{} error={}",
+                                      endpoint.address().to_string(),
+                                      endpoint.port(),
+                                      errorCode.message()));
+            return std::unexpected(errorCode);
+        }
+
+        errorCode = _acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true),
+                                         errorCode);
+        if (errorCode)
+        {
+            Log::ErrorLog(
+                Log::Format("Failed to configure acceptor reuse_address: endpoint={}:{} error={}",
+                            endpoint.address().to_string(),
+                            endpoint.port(),
+                            errorCode.message()));
+            return std::unexpected(errorCode);
+        }
+
+        errorCode = _acceptor.bind(endpoint, errorCode);
+        if (errorCode)
+        {
+            Log::ErrorLog(Log::Format("Failed to bind acceptor: endpoint={}:{} error={}",
+                                      endpoint.address().to_string(),
+                                      endpoint.port(),
+                                      errorCode.message()));
+            return std::unexpected(errorCode);
+        }
+
+        errorCode = _acceptor.listen(boost::asio::socket_base::max_listen_connections, errorCode);
+        if (errorCode)
+        {
+            Log::ErrorLog(Log::Format("Failed to listen on acceptor: endpoint={}:{} error={}",
+                                      endpoint.address().to_string(),
+                                      endpoint.port(),
+                                      errorCode.message()));
+            return std::unexpected(errorCode);
+        }
+
+        _status = Status::Initialized;
+
+        Log::InfoLog(Log::Format("Acceptor listening: endpoint={}:{}",
+                                 endpoint.address().to_string(),
+                                 endpoint.port()));
+
+        return {};
     }
 
     auto Acceptor::DoAccept() -> void
@@ -99,22 +174,28 @@ namespace Flux
                 const auto remoteEndpoint = acceptedSocket.remote_endpoint(remoteEndpointError);
 
                 if (remoteEndpointError)
-                    spdlog::info("Accepted client connection");
+                {
+                    Log::InfoLog(
+                        Log::Format("Accepted client connection; remote endpoint unavailable: {}",
+                                    remoteEndpointError.message()));
+                }
                 else
-                    spdlog::info("Accepted client connection from {}:{}",
-                                 remoteEndpoint.address().to_string(),
-                                 remoteEndpoint.port());
+                {
+                    Log::InfoLog(Log::Format("Accepted client connection: remote={}:{}",
+                                             remoteEndpoint.address().to_string(),
+                                             remoteEndpoint.port()));
+                }
 
                 // TODO: handle client
             }
             else if (errorCode == boost::asio::error::operation_aborted)
             {
-                spdlog::debug("Acceptor async accept cancelled");
+                Log::DebugLog("Acceptor async accept cancelled");
                 return;
             }
             else
             {
-                spdlog::warn("Acceptor async accept failed: {}", errorCode.message());
+                Log::WarnLog(Log::Format("Acceptor async accept failed: {}", errorCode.message()));
 
                 self->_retryTimer.expires_after(RetryInterval);
 
@@ -125,8 +206,8 @@ namespace Flux
 
                         if (timerError)
                         {
-                            spdlog::warn("Acceptor::DoAccept(): Retry timer error {}",
-                                         timerError.message());
+                            Log::WarnLog(Log::Format("Acceptor retry timer failed: {}",
+                                                     timerError.message()));
                             return;
                         }
 

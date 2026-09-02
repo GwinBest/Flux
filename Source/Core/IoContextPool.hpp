@@ -1,10 +1,12 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
-#include <expected>
+#include <mutex>
 #include <thread>
 #include <vector>
 
+#include "../Utils/Error.hpp"
 #include "boost/asio/executor_work_guard.hpp"
 #include "boost/asio/io_context.hpp"
 #include "boost/asio/strand.hpp"
@@ -28,8 +30,8 @@ namespace Flux
 
         ~IoContextPool();
 
-        auto Run() -> std::expected<bool, std::string>;
-        auto Stop() -> std::expected<bool, std::string>;
+        auto Run() -> Result;
+        auto Stop() -> Result;
 
         [[nodiscard]] auto GetIoContext() const noexcept -> const IoContext& { return _ioContext; }
 

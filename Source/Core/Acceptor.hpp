@@ -2,13 +2,12 @@
 
 #include <atomic>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/system/error_code.hpp>
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <memory>
-#include <mutex>
-#include <string>
 
+#include "../Utils/Error.hpp"
 #include "IoContextPool.hpp"
 
 namespace Flux
@@ -25,10 +24,10 @@ namespace Flux
 
         static auto CreateAcceptor(const IoContextPool::Strand& strand,
                                    const boost::asio::ip::tcp::endpoint& endpoint)
-            -> std::shared_ptr<Acceptor>;
+            -> std::expected<std::shared_ptr<Acceptor>, ErrorCode>;
 
-        auto StartAccepting() -> std::expected<bool, std::string>;
-        auto StopAccepting() noexcept -> boost::system::error_code;
+        auto StartAccepting() -> Result;
+        auto StopAccepting() noexcept -> Result;
 
     private:
         enum class Status : std::uint8_t
@@ -40,15 +39,14 @@ namespace Flux
         };
 
     private:
-        Acceptor(const IoContextPool::Strand& strand,
-                 const boost::asio::ip::tcp::endpoint& endpoint);
+        explicit Acceptor(const IoContextPool::Strand& strand);
+
+        auto Open(const boost::asio::ip::tcp::endpoint& endpoint) noexcept -> Result;
 
         auto DoAccept() -> void;
 
     private:
         boost::asio::ip::tcp::acceptor _acceptor;
-
-        std::mutex _mutex;
 
         boost::asio::steady_timer _retryTimer;
         static constexpr auto RetryInterval = std::chrono::milliseconds(100);

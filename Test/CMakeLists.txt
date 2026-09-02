@@ -15,6 +15,7 @@ FetchContent_Declare(googletest
 FetchContent_MakeAvailable(googletest)
 
 add_executable(${PROJECT_NAME}-Tests
+        ServerTest.cpp
         Core/AcceptorTest.cpp
         Core/IoContextPoolTest.cpp
 )

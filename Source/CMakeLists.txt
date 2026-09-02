@@ -1,21 +1,20 @@
-find_package(Boost CONFIG QUIET COMPONENTS asio uuid)
+find_package(Boost CONFIG QUIET COMPONENTS asio)
 find_package(spdlog CONFIG QUIET)
 
 if (Boost_FOUND)
     set(BOOST_ASIO_TARGET Boost::asio)
-    set(BOOST_UUID_TARGET Boost::uuid)
 else ()
     include(FetchContent)
 
-    set(BOOST_INCLUDE_LIBRARIES asio uuid)
+    set(BOOST_INCLUDE_LIBRARIES asio)
     FetchContent_Declare(Boost
             URL https://github.com/boostorg/boost/releases/download/boost-1.92.0/boost-1.92.0-cmake.tar.xz
+            URL_HASH SHA256=9BED76128D4E46755DBE818487788C6FCEB6F72B378F4DAA49B7E1E600D9088D
             DOWNLOAD_EXTRACT_TIMESTAMP ON
             SYSTEM
     )
     FetchContent_MakeAvailable(Boost)
     set(BOOST_ASIO_TARGET boost_asio)
-    set(BOOST_UUID_TARGET boost_uuid)
 endif ()
 
 if (spdlog_FOUND)
@@ -25,6 +24,7 @@ else ()
 
     FetchContent_Declare(spdlog
             URL https://github.com/gabime/spdlog/archive/refs/tags/v1.17.0.tar.gz
+            URL_HASH SHA256=D8862955C6D74E5846B3F580B1605D2428B11D97A410D86E2FB13E857CD3A744
             DOWNLOAD_EXTRACT_TIMESTAMP ON
             SYSTEM
     )
@@ -40,7 +40,7 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
 add_library(${PROJECT_NAME} ${SOURCES})
 
 target_link_libraries(${PROJECT_NAME}
-        PUBLIC ${BOOST_ASIO_TARGET} ${BOOST_UUID_TARGET}
+        PUBLIC ${BOOST_ASIO_TARGET}
         PRIVATE ${SPDLOG_TARGET}
 )
 
