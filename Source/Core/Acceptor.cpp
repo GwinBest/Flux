@@ -3,15 +3,14 @@
 #include <boost/asio/error.hpp>
 #include <boost/system/system_error.hpp>
 
-#include "../Utils/Log.hpp"
+#include "Utils/Log.hpp"
 
 namespace Flux
 {
     Acceptor::~Acceptor() noexcept
     {
         if (const auto stopResult = StopAccepting(); !stopResult)
-            Log::ErrorLog(Log::Format("Destructor failed to stop acceptor: {}",
-                                      stopResult.error().message()));
+            ErrorLog("Destructor failed to stop acceptor: {}", stopResult.error().message());
     }
 
     auto Acceptor::CreateAcceptor(const IoContextPool::Strand& strand,
@@ -30,13 +29,13 @@ namespace Flux
     {
         if (_status != Status::Initialized)
         {
-            Log::WarnLog("Start rejected: acceptor is not initialized");
+            WarnLog("Start rejected: acceptor is not initialized");
             return std::unexpected(MakeErrorCode(Error::AcceptorNotInitialized));
         }
 
         _status = Status::Started;
 
-        Log::InfoLog("Acceptor started accepting connections");
+        InfoLog("Acceptor started accepting connections");
 
         DoAccept();
 
@@ -62,8 +61,7 @@ namespace Flux
         catch (const boost::system::system_error& error)
         {
             firstError = error.code();
-            Log::WarnLog(
-                Log::Format("Failed to cancel acceptor retry timer: {}", error.code().message()));
+            WarnLog("Failed to cancel acceptor retry timer: {}", error.code().message());
         }
 
         if (_acceptor.is_open())
@@ -75,17 +73,16 @@ namespace Flux
                 if (!firstError)
                     firstError = errorCode;
 
-                Log::ErrorLog(Log::Format("Failed to close acceptor: {}", errorCode.message()));
+                ErrorLog("Failed to close acceptor: {}", errorCode.message());
             }
             else
             {
-                Log::InfoLog(
-                    Log::Format("Acceptor stopped; cancelled_retry_timers={}", cancelledTimers));
+                InfoLog("Acceptor stopped; cancelled_retry_timers={}", cancelledTimers);
             }
         }
         else
         {
-            Log::DebugLog("Acceptor stop requested while socket is already closed");
+            DebugLog("Acceptor stop requested while socket is already closed");
         }
 
         if (firstError)
@@ -106,10 +103,10 @@ namespace Flux
         errorCode = _acceptor.open(endpoint.protocol(), errorCode);
         if (errorCode)
         {
-            Log::ErrorLog(Log::Format("Failed to open acceptor: endpoint={}:{} error={}",
-                                      endpoint.address().to_string(),
-                                      endpoint.port(),
-                                      errorCode.message()));
+            ErrorLog("Failed to open acceptor: endpoint={}:{} error={}",
+                     endpoint.address().to_string(),
+                     endpoint.port(),
+                     errorCode.message());
             return std::unexpected(errorCode);
         }
 
@@ -117,39 +114,38 @@ namespace Flux
                                          errorCode);
         if (errorCode)
         {
-            Log::ErrorLog(
-                Log::Format("Failed to configure acceptor reuse_address: endpoint={}:{} error={}",
-                            endpoint.address().to_string(),
-                            endpoint.port(),
-                            errorCode.message()));
+            ErrorLog("Failed to configure acceptor reuse_address: endpoint={}:{} error={}",
+                     endpoint.address().to_string(),
+                     endpoint.port(),
+                     errorCode.message());
             return std::unexpected(errorCode);
         }
 
         errorCode = _acceptor.bind(endpoint, errorCode);
         if (errorCode)
         {
-            Log::ErrorLog(Log::Format("Failed to bind acceptor: endpoint={}:{} error={}",
-                                      endpoint.address().to_string(),
-                                      endpoint.port(),
-                                      errorCode.message()));
+            ErrorLog("Failed to bind acceptor: endpoint={}:{} error={}",
+                     endpoint.address().to_string(),
+                     endpoint.port(),
+                     errorCode.message());
             return std::unexpected(errorCode);
         }
 
         errorCode = _acceptor.listen(boost::asio::socket_base::max_listen_connections, errorCode);
         if (errorCode)
         {
-            Log::ErrorLog(Log::Format("Failed to listen on acceptor: endpoint={}:{} error={}",
-                                      endpoint.address().to_string(),
-                                      endpoint.port(),
-                                      errorCode.message()));
+            ErrorLog("Failed to listen on acceptor: endpoint={}:{} error={}",
+                     endpoint.address().to_string(),
+                     endpoint.port(),
+                     errorCode.message());
             return std::unexpected(errorCode);
         }
 
         _status = Status::Initialized;
 
-        Log::InfoLog(Log::Format("Acceptor listening: endpoint={}:{}",
-                                 endpoint.address().to_string(),
-                                 endpoint.port()));
+        InfoLog("Acceptor listening: endpoint={}:{}",
+                endpoint.address().to_string(),
+                endpoint.port());
 
         return {};
     }
@@ -175,27 +171,26 @@ namespace Flux
 
                 if (remoteEndpointError)
                 {
-                    Log::InfoLog(
-                        Log::Format("Accepted client connection; remote endpoint unavailable: {}",
-                                    remoteEndpointError.message()));
+                    InfoLog("Accepted client connection; remote endpoint unavailable: {}",
+                            remoteEndpointError.message());
                 }
                 else
                 {
-                    Log::InfoLog(Log::Format("Accepted client connection: remote={}:{}",
-                                             remoteEndpoint.address().to_string(),
-                                             remoteEndpoint.port()));
+                    InfoLog("Accepted client connection: remote={}:{}",
+                            remoteEndpoint.address().to_string(),
+                            remoteEndpoint.port());
                 }
 
                 // TODO: handle client
             }
             else if (errorCode == boost::asio::error::operation_aborted)
             {
-                Log::DebugLog("Acceptor async accept cancelled");
+                DebugLog("Acceptor async accept cancelled");
                 return;
             }
             else
             {
-                Log::WarnLog(Log::Format("Acceptor async accept failed: {}", errorCode.message()));
+                WarnLog("Acceptor async accept failed: {}", errorCode.message());
 
                 self->_retryTimer.expires_after(RetryInterval);
 
@@ -206,8 +201,7 @@ namespace Flux
 
                         if (timerError)
                         {
-                            Log::WarnLog(Log::Format("Acceptor retry timer failed: {}",
-                                                     timerError.message()));
+                            WarnLog("Acceptor retry timer failed: {}", timerError.message());
                             return;
                         }
 

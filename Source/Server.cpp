@@ -18,17 +18,17 @@ namespace Flux
         _signalSet.async_wait([this](const ErrorCode& signalError, int signalNumber) -> void {
             if (signalError == boost::asio::error::operation_aborted)
             {
-                Log::DebugLog("Server signal wait cancelled");
+                DebugLog("Server signal wait cancelled");
                 return;
             }
 
             if (signalError)
             {
-                Log::WarnLog(Log::Format("Server signal wait failed: {}", signalError.message()));
+                WarnLog("Server signal wait failed: {}", signalError.message());
                 return;
             }
 
-            Log::InfoLog(Log::Format("Shutdown requested by signal={}", signalNumber));
+            InfoLog("Shutdown requested by signal={}", signalNumber);
 
             _status = Status::Stopping;
 
@@ -39,8 +39,7 @@ namespace Flux
     Server::~Server()
     {
         if (const auto result = Stop(); !result)
-            Log::ErrorLog(
-                Log::Format("Destructor failed to stop server: {}", result.error().message()));
+            ErrorLog("Destructor failed to stop server: {}", result.error().message());
     }
 
     auto Server::Run() -> Result
@@ -60,9 +59,8 @@ namespace Flux
         if (!result)
         {
             if (const auto acceptorStopResult = _acceptor->StopAccepting(); !acceptorStopResult)
-                Log::ErrorLog(
-                    Log::Format("Failed to stop acceptor after io_context start error: {}",
-                                acceptorStopResult.error().message()));
+                ErrorLog("Failed to stop acceptor after io_context start error: {}",
+                         acceptorStopResult.error().message());
 
             _status = Status::Stopped;
             _stoppedCondition.notify_all();
@@ -86,8 +84,7 @@ namespace Flux
         if (signalError)
         {
             firstError = signalError;
-            Log::WarnLog(
-                Log::Format("Failed to cancel server signal wait: {}", signalError.message()));
+            WarnLog("Failed to cancel server signal wait: {}", signalError.message());
         }
 
         if (_acceptor)
@@ -97,8 +94,7 @@ namespace Flux
                 if (!firstError)
                     firstError = acceptorStopResult.error();
 
-                Log::ErrorLog(Log::Format("Failed to stop acceptor: {}",
-                                          acceptorStopResult.error().message()));
+                ErrorLog("Failed to stop acceptor: {}", acceptorStopResult.error().message());
             }
         }
 
@@ -107,14 +103,13 @@ namespace Flux
             if (!firstError)
                 firstError = ioContextStopResult.error();
 
-            Log::ErrorLog(Log::Format("Failed to stop io_context pool: {}",
-                                      ioContextStopResult.error().message()));
+            ErrorLog("Failed to stop io_context pool: {}", ioContextStopResult.error().message());
         }
 
         if (firstError)
             return std::unexpected(firstError);
 
-        Log::InfoLog("Server stopped");
+        InfoLog("Server stopped");
 
         _status = Status::Stopped;
 

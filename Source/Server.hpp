@@ -44,10 +44,6 @@ namespace Flux
         };
 
     private:
-        auto RequestStop() -> void;
-        auto Shutdown() -> Result;
-
-    private:
         IoContextPool _ioContextPool;
         std::shared_ptr<Acceptor> _acceptor;
 

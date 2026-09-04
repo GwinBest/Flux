@@ -6,7 +6,7 @@
 #include <thread>
 #include <vector>
 
-#include "../Utils/Error.hpp"
+#include "Utils/Error.hpp"
 #include "boost/asio/executor_work_guard.hpp"
 #include "boost/asio/io_context.hpp"
 #include "boost/asio/strand.hpp"
