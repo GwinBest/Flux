@@ -9,7 +9,7 @@
 
 namespace Flux
 {
-    struct LogMessage
+    struct LogMessage final
     {
         template<typename Message>
         LogMessage(
