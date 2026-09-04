@@ -13,7 +13,7 @@ namespace Flux
         , _acceptor(Acceptor::CreateAcceptor(_ioContextPool.GetStrand(), endpoint).value())
         , _threadCount(std::max<std::size_t>(1, threadCount))
         , _signalSet(_ioContextPool.GetStrand(), SIGINT, SIGTERM)
-        , _status(Status::NotInitialized)
+        , _status(Status::Initialized)
     {
         _signalSet.async_wait([this](const ErrorCode& signalError, int signalNumber) -> void {
             if (signalError == boost::asio::error::operation_aborted)
@@ -38,16 +38,22 @@ namespace Flux
 
     Server::~Server()
     {
+        if (_status == Status::Stopped)
+            return;
+
         if (const auto result = Stop(); !result)
             ErrorLog("Destructor failed to stop server: {}", result.error().message());
     }
 
     auto Server::Run() -> Result
     {
-        std::unique_lock lock(_mutex);
-
         if (_status != Status::Initialized)
+        {
+            WarnLog("Server run failed: Status is not initialized");
             return std::unexpected(MakeErrorCode(Error::ServerNotInitialized));
+        }
+
+        std::unique_lock lock(_mutex);
 
         auto result = _acceptor->StartAccepting();
 
@@ -77,6 +83,12 @@ namespace Flux
 
     auto Server::Stop() -> Result
     {
+        if (_status != Status::Stopping)
+        {
+            WarnLog("Server stop failed: Server status is not Status::Stopping");
+            return std::unexpected(MakeErrorCode(Error::ServerNotStopping));
+        }
+
         ErrorCode firstError;
 
         ErrorCode signalError;

@@ -10,10 +10,13 @@ namespace Flux
     {
         ServerNotInitialized = 1,
         ServerNotRunning,
+        ServerNotStopping,
         IoContextPoolNotStarted,
         IoContextPoolNotRunning,
         IoContextPoolStopFromWorkerThread,
         AcceptorNotInitialized,
+        AcceptorNotStarted,
+        AcceptorAlreadyOpen,
     };
 
     class ErrorCategory final : public boost::system::error_category
@@ -27,11 +30,14 @@ namespace Flux
             {
             case Error::ServerNotInitialized:    return "server is not initialized";
             case Error::ServerNotRunning:        return "server is not running";
+            case Error::ServerNotStopping:       return "server is not stopping";
             case Error::IoContextPoolNotStarted: return "IO context pool is not started";
             case Error::IoContextPoolNotRunning: return "IO context pool is not running";
             case Error::IoContextPoolStopFromWorkerThread:
                 return "IO context pool cannot be stopped from one of its worker threads";
             case Error::AcceptorNotInitialized: return "acceptor is not initialized";
+            case Error::AcceptorNotStarted:     return "acceptor is not started";
+            case Error::AcceptorAlreadyOpen:    return "acceptor already open";
             default:                            return "unknown error";
             }
 

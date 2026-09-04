@@ -9,6 +9,9 @@ namespace Flux
 {
     Acceptor::~Acceptor() noexcept
     {
+        if (_status == Status::Stopped)
+            return;
+
         if (const auto stopResult = StopAccepting(); !stopResult)
             ErrorLog("Destructor failed to stop acceptor: {}", stopResult.error().message());
     }
@@ -44,6 +47,12 @@ namespace Flux
 
     auto Acceptor::StopAccepting() noexcept -> Result
     {
+        if (_status != Status::Started)
+        {
+            WarnLog("Stop rejected: acceptor is not started");
+            return std::unexpected(MakeErrorCode(Error::AcceptorNotStarted));
+        }
+
         ErrorCode firstError;
 
         if (const auto currentStatus = _status.load();
@@ -98,6 +107,12 @@ namespace Flux
 
     auto Acceptor::Open(const boost::asio::ip::tcp::endpoint& endpoint) noexcept -> Result
     {
+        if (_acceptor.is_open())
+        {
+            WarnLog("Acceptor open rejected: acceptor already open");
+            return std::unexpected(MakeErrorCode(Error::AcceptorNotStarted));
+        }
+
         ErrorCode errorCode;
 
         errorCode = _acceptor.open(endpoint.protocol(), errorCode);
