@@ -47,7 +47,7 @@ namespace Flux
 
     auto Acceptor::StopAccepting() noexcept -> Result
     {
-        if (_status != Status::Started)
+        if (_status != Status::Initialized && _status != Status::Started)
         {
             WarnLog("Stop rejected: acceptor is not started");
             return std::unexpected(MakeErrorCode(Error::AcceptorNotStarted));
