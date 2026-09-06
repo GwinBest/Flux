@@ -1,4 +1,5 @@
 #include "Core/IoContextPool.hpp"
+#include "gtest/gtest.h"
 
 #include <chrono>
 #include <cstddef>
@@ -9,21 +10,22 @@
 
 #include "boost/asio/post.hpp"
 
-#include "gtest/gtest.h"
-
 namespace Flux::Test
 {
-    using namespace std::chrono_literals;
-
-    constexpr auto FutureTimeout = 2s;
-    constexpr std::size_t NoThreadCount = 0U;
-    constexpr std::size_t SingleThreadCount = 1U;
-
-    template <typename TValue>
-    auto ErrorMessage(const std::expected<TValue, ErrorCode>& result) -> std::string
+    namespace
     {
-        return result.has_value() ? std::string{} : result.error().message();
-    }
+        using namespace std::chrono_literals;
+
+        constexpr auto FutureTimeout = 2s;
+        constexpr std::size_t NoThreadCount = 0U;
+        constexpr std::size_t SingleThreadCount = 1U;
+
+        template<typename TValue>
+        auto ErrorMessage(const std::expected<TValue, ErrorCode>& result) -> std::string
+        {
+            return result.has_value() ? std::string {} : result.error().message();
+        }
+    }   // namespace
 
     static_assert(!std::is_copy_constructible_v<IoContextPool>);
     static_assert(!std::is_copy_assignable_v<IoContextPool>);
@@ -153,7 +155,7 @@ namespace Flux::Test
     {
         IoContextPool pool(SingleThreadCount);
         std::promise<void> handlerCalledPromise;
-        auto handlerCalled = handlerCalledPromise.get_future();
+        const auto handlerCalled = handlerCalledPromise.get_future();
 
         boost::asio::post(pool.GetStrand(),
                           [&handlerCalledPromise] -> void { handlerCalledPromise.set_value(); });
@@ -192,8 +194,8 @@ namespace Flux::Test
 
         boost::asio::post(pool.GetStrand(), [&pool, &workerStopResultPromise] -> void {
             const auto stopResult = pool.Stop();
-            workerStopResultPromise.set_value(stopResult.has_value() ? ErrorCode{}
-                                                                    : stopResult.error());
+            workerStopResultPromise.set_value(stopResult.has_value() ? ErrorCode {}
+                                                                     : stopResult.error());
         });
 
         const auto runResult = pool.Run();
