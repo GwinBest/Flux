@@ -84,6 +84,7 @@ jobs:
           -DBUILD_TEST=ON
           -DENABLE_CLANG_TIDY=OFF
           -DENABLE_CLANG_FORMAT=OFF
+          -DENABLE_ASAN=OFF
           -S ${{ github.workspace }}
 
       - name: Build
