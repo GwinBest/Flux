@@ -20,7 +20,7 @@ namespace Flux
     {
         if (_status == Status::Stopped)
             return;
-        
+
         _ioContext.stop();   // Hard stop
 
         if (const auto stopResult = Stop(); !stopResult.has_value())
