@@ -40,8 +40,6 @@ namespace Flux
             case Error::AcceptorAlreadyOpen:    return "acceptor already open";
             default:                            return "unknown error";
             }
-
-            return "unknown error";
         }
     };
 
