@@ -7,6 +7,5 @@ auto main() -> int
 
     server.Run();
     server.Stop();
-    
     return 0;
 }
