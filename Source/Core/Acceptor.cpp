@@ -1,19 +1,30 @@
 #include "Acceptor.hpp"
 
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/system/system_error.hpp>
+#include <utility>
 
 #include "Utils/Log.hpp"
 
 namespace Flux
 {
-    Acceptor::~Acceptor() noexcept
+    auto Acceptor::AsyncStartAccepting(CompletionHandler onStarted) -> void
     {
-        if (_status == Status::Stopped)
-            return;
+        boost::asio::dispatch(
+            _strand,
+            [self = shared_from_this(), onStarted = std::move(onStarted)] -> void {
+                onStarted(self->StartAccepting());
+            });
+    }
 
-        if (const auto stopResult = StopAccepting(); !stopResult)
-            ErrorLog("Destructor failed to stop acceptor: {}", stopResult.error().message());
+    auto Acceptor::AsyncStopAccepting(CompletionHandler onStopped) -> void
+    {
+        boost::asio::dispatch(
+            _strand,
+            [self = shared_from_this(), onStopped = std::move(onStopped)] -> void {
+                onStopped(self->StopAccepting());
+            });
     }
 
     auto Acceptor::CreateAcceptor(const IoContextPool::Strand& strand,
@@ -45,7 +56,7 @@ namespace Flux
         return {};
     }
 
-    auto Acceptor::StopAccepting() noexcept -> Result
+    auto Acceptor::StopAccepting() -> Result
     {
         if (_status != Status::Initialized && _status != Status::Started)
         {
@@ -54,10 +65,6 @@ namespace Flux
         }
 
         ErrorCode firstError;
-
-        if (const auto currentStatus = _status.load();
-            currentStatus == Status::Stopped || currentStatus == Status::NotInitialized)
-            return {};
 
         _status = Status::Stopped;
 
@@ -100,9 +107,10 @@ namespace Flux
         return {};
     }
 
-    Acceptor::Acceptor(const IoContextPool::Strand& strand)
-        : _acceptor(strand)
-        , _retryTimer(strand)
+    Acceptor::Acceptor(IoContextPool::Strand strand)
+        : _strand(std::move(strand))
+        , _acceptor(_strand)
+        , _retryTimer(_strand)
     {}
 
     auto Acceptor::Open(const boost::asio::ip::tcp::endpoint& endpoint) -> Result
@@ -110,7 +118,7 @@ namespace Flux
         if (_acceptor.is_open())
         {
             WarnLog("Acceptor open rejected: acceptor already open");
-            return std::unexpected(MakeErrorCode(Error::AcceptorNotStarted));
+            return std::unexpected(MakeErrorCode(Error::AcceptorAlreadyOpen));
         }
 
         ErrorCode errorCode;
@@ -179,54 +187,67 @@ namespace Flux
             if (!self)
                 return;
 
-            if (!errorCode)
-            {
-                boost::system::error_code remoteEndpointError;
-                const auto remoteEndpoint = acceptedSocket.remote_endpoint(remoteEndpointError);
+            self->OnAccept(errorCode, std::move(acceptedSocket));
+        });
+    }
 
-                if (remoteEndpointError)
-                {
-                    InfoLog("Accepted client connection; remote endpoint unavailable: {}",
-                            remoteEndpointError.message());
-                }
-                else
-                {
-                    InfoLog("Accepted client connection: remote={}:{}",
-                            remoteEndpoint.address().to_string(),
-                            remoteEndpoint.port());
-                }
+    auto Acceptor::OnAccept(const ErrorCode& errorCode, boost::asio::ip::tcp::socket acceptedSocket)
+        -> void
+    {
+        if (_status != Status::Started)
+            return;
 
-                // TODO: handle client
-            }
-            else if (errorCode == boost::asio::error::operation_aborted)
+        if (!errorCode)
+        {
+            boost::system::error_code remoteEndpointError;
+            const auto remoteEndpoint = acceptedSocket.remote_endpoint(remoteEndpointError);
+
+            if (remoteEndpointError)
             {
-                DebugLog("Acceptor async accept cancelled");
-                return;
+                InfoLog("Accepted client connection; remote endpoint unavailable: {}",
+                        remoteEndpointError.message());
             }
             else
             {
-                WarnLog("Acceptor async accept failed: {}", errorCode.message());
-
-                self->_retryTimer.expires_after(RetryInterval);
-
-                self->_retryTimer.async_wait(
-                    [self](const boost::system::error_code& timerError) -> void {
-                        if (timerError == boost::asio::error::operation_aborted)
-                            return;
-
-                        if (timerError)
-                        {
-                            WarnLog("Acceptor retry timer failed: {}", timerError.message());
-                            return;
-                        }
-
-                        self->DoAccept();
-                    });
-
-                return;
+                InfoLog("Accepted client connection: remote={}:{}",
+                        remoteEndpoint.address().to_string(),
+                        remoteEndpoint.port());
             }
 
-            self->DoAccept();   // Accept next client
-        });
+            // TODO: handle client
+        }
+        else if (errorCode == boost::asio::error::operation_aborted)
+        {
+            DebugLog("Acceptor async accept cancelled");
+            return;
+        }
+        else
+        {
+            WarnLog("Acceptor async accept failed: {}", errorCode.message());
+
+            _retryTimer.expires_after(RetryInterval);
+
+            _retryTimer.async_wait(
+                [weakSelf = weak_from_this()](const boost::system::error_code& timerError) -> void {
+                    const auto retrySelf = weakSelf.lock();
+                    if (!retrySelf || retrySelf->_status != Status::Started)
+                        return;
+
+                    if (timerError == boost::asio::error::operation_aborted)
+                        return;
+
+                    if (timerError)
+                    {
+                        WarnLog("Acceptor retry timer failed: {}", timerError.message());
+                        return;
+                    }
+
+                    retrySelf->DoAccept();
+                });
+
+            return;
+        }
+
+        DoAccept();   // Accept next client
     }
 }   // namespace Flux
