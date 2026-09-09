@@ -12,10 +12,15 @@ namespace Flux
     struct LogMessage final
     {
         template<typename Message>
-        LogMessage(
+        explicit(false) LogMessage(
             const Message& messageText,
             const std::source_location sourceLocation = std::source_location::current()) noexcept
-            : Text(messageText)
+            : Text([&messageText] -> std::string_view {
+                if constexpr (std::is_array_v<Message>)
+                    return std::string_view(static_cast<const char*>(messageText));
+                else
+                    return std::string_view(messageText);
+            }())
             , Location(sourceLocation)
         {}
 
@@ -42,25 +47,25 @@ namespace Flux
     }
 
     template<typename... Args>
-    void DebugLog(const std::type_identity_t<LogMessage> message, Args&&... args)
+    void DebugLog(const LogMessage message, Args&&... args)
     {
         WriteLog(spdlog::level::debug, message, std::forward<Args>(args)...);
     }
 
     template<typename... Args>
-    void InfoLog(const std::type_identity_t<LogMessage> message, Args&&... args)
+    void InfoLog(const LogMessage message, Args&&... args)
     {
         WriteLog(spdlog::level::info, message, std::forward<Args>(args)...);
     }
 
     template<typename... Args>
-    void WarnLog(const std::type_identity_t<LogMessage> message, Args&&... args)
+    void WarnLog(const LogMessage message, Args&&... args)
     {
         WriteLog(spdlog::level::warn, message, std::forward<Args>(args)...);
     }
 
     template<typename... Args>
-    void ErrorLog(const std::type_identity_t<LogMessage> message, Args&&... args)
+    void ErrorLog(const LogMessage message, Args&&... args)
     {
         WriteLog(spdlog::level::err, message, std::forward<Args>(args)...);
     }

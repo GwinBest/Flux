@@ -41,7 +41,7 @@ namespace Flux
     private:
         explicit Acceptor(const IoContextPool::Strand& strand);
 
-        auto Open(const boost::asio::ip::tcp::endpoint& endpoint) noexcept -> Result;
+        auto Open(const boost::asio::ip::tcp::endpoint& endpoint) -> Result;
 
         auto DoAccept() -> void;
 

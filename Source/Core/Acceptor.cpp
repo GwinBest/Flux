@@ -105,7 +105,7 @@ namespace Flux
         , _retryTimer(strand)
     {}
 
-    auto Acceptor::Open(const boost::asio::ip::tcp::endpoint& endpoint) noexcept -> Result
+    auto Acceptor::Open(const boost::asio::ip::tcp::endpoint& endpoint) -> Result
     {
         if (_acceptor.is_open())
         {
