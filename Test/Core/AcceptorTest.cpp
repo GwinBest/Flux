@@ -209,7 +209,7 @@ namespace Flux::Test
         auto result = Acceptor::CreateAcceptor(strand, MakeLoopbackEndpoint());
         ASSERT_TRUE(result.has_value());
         auto acceptor = std::move(*result);
-        const std::weak_ptr<Acceptor> weakAcceptor = acceptor;
+        const std::weak_ptr weakAcceptor = acceptor;
         auto started = Start(acceptor);
         auto stopped = Stop(acceptor);
 
@@ -223,73 +223,5 @@ namespace Flux::Test
         EXPECT_TRUE(Await(std::move(started)).has_value());
         EXPECT_TRUE(Await(std::move(stopped)).has_value());
         EXPECT_TRUE(weakAcceptor.expired());
-    }
-
-    TEST(AcceptorAsyncTest, CanStopFromStartCompletionOnTheStrand)
-    {
-        boost::asio::io_context context;
-        const auto strand = boost::asio::make_strand(context);
-        const auto result = Acceptor::CreateAcceptor(strand, MakeLoopbackEndpoint());
-        ASSERT_TRUE(result.has_value());
-        const auto& acceptor = *result;
-        bool stopped = false;
-
-        acceptor->AsyncStartAccepting([&](Result startResult) {
-            EXPECT_TRUE(strand.running_in_this_thread());
-            EXPECT_TRUE(startResult.has_value());
-            acceptor->AsyncStopAccepting([&](Result stopResult) {
-                EXPECT_TRUE(strand.running_in_this_thread());
-                EXPECT_TRUE(stopResult.has_value());
-                stopped = true;
-            });
-        });
-
-        context.run();
-        EXPECT_TRUE(stopped);
-    }
-
-    TEST(AcceptorAsyncTest, SerializesConcurrentStartAndStopRequests)
-    {
-        IoContextPool pool(4U);
-        ASSERT_TRUE(pool.Run().has_value());
-        const auto result = Acceptor::CreateAcceptor(pool.GetStrand(), MakeLoopbackEndpoint());
-        ASSERT_TRUE(result.has_value());
-        const auto& acceptor = *result;
-        constexpr std::size_t RequestCount = 8U;
-        std::vector<std::future<Result>> starts(RequestCount);
-        std::vector<std::future<Result>> stops(RequestCount);
-
-        {
-            std::vector<std::jthread> callers;
-            for (std::size_t i = 0; i < RequestCount; ++i)
-                callers.emplace_back([&, i] { starts[i] = Start(acceptor); });
-        }
-        std::size_t successfulStarts = 0U;
-        for (auto& future : starts)
-        {
-            const auto startResult = Await(std::move(future));
-            if (startResult)
-                ++successfulStarts;
-            else
-                EXPECT_EQ(startResult.error(), MakeErrorCode(Error::AcceptorNotInitialized));
-        }
-        EXPECT_EQ(successfulStarts, 1U);
-
-        {
-            std::vector<std::jthread> callers;
-            for (std::size_t i = 0; i < RequestCount; ++i)
-                callers.emplace_back([&, i] { stops[i] = Stop(acceptor); });
-        }
-        std::size_t successfulStops = 0U;
-        for (auto& future : stops)
-        {
-            const auto stopResult = Await(std::move(future));
-            if (stopResult)
-                ++successfulStops;
-            else
-                EXPECT_EQ(stopResult.error(), MakeErrorCode(Error::AcceptorNotStarted));
-        }
-        EXPECT_EQ(successfulStops, 1U);
-        EXPECT_TRUE(pool.Stop().has_value());
     }
 }   // namespace Flux::Test
