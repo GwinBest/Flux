@@ -34,13 +34,13 @@ namespace Flux
                 WarnLog("Server signal wait failed: {}", signalError.message());
                 return;
             }
-
+            
             {
                 const std::scoped_lock lock(_mutex);
                 _status = Status::Stopping;
             }
             _stoppedCondition.notify_all();
-            
+
             InfoLog("Shutdown requested by signal={}", signalNumber);
         });
     }
