@@ -60,6 +60,12 @@ jobs:
       - name: Install Compilers (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
+          # Chrome is not needed for this build; its repository can break apt updates.
+          for source in /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources; do
+            if [ -f "$source" ]; then
+              sudo mv "$source" "$source.disabled"
+            fi
+          done
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 19
@@ -105,6 +111,12 @@ jobs:
 
       - name: Install LLVM 22 tools
         run: |
+          # Chrome is not needed for linting; its repository can break apt updates.
+          for source in /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources; do
+            if [ -f "$source" ]; then
+              sudo mv "$source" "$source.disabled"
+            fi
+          done
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 22
