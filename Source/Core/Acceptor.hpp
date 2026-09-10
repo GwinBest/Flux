@@ -1,10 +1,11 @@
 #pragma once
 
-#include <atomic>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <chrono>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
 
 #include "Core/IoContextPool.hpp"
@@ -20,14 +21,18 @@ namespace Flux
         Acceptor(Acceptor&&) = delete;
         auto operator=(Acceptor&&) -> Acceptor& = delete;
 
-        ~Acceptor() noexcept;
+        ~Acceptor() = default;
 
         static auto CreateAcceptor(const IoContextPool::Strand& strand,
                                    const boost::asio::ip::tcp::endpoint& endpoint)
             -> std::expected<std::shared_ptr<Acceptor>, ErrorCode>;
 
-        auto StartAccepting() -> Result;
-        auto StopAccepting() noexcept -> Result;
+        using CompletionHandler = std::function<void(Result)>;
+
+        // Completion runs on the strand, possibly inline. The io_context must be running
+        // to process queued commands; stop must complete before shutting it down.
+        auto AsyncStartAccepting(CompletionHandler onStarted) -> void;
+        auto AsyncStopAccepting(CompletionHandler onStopped) -> void;
 
     private:
         enum class Status : std::uint8_t
@@ -39,19 +44,26 @@ namespace Flux
         };
 
     private:
-        explicit Acceptor(const IoContextPool::Strand& strand);
+        explicit Acceptor(IoContextPool::Strand strand);
 
-        auto Open(const boost::asio::ip::tcp::endpoint& endpoint) noexcept -> Result;
+        auto Open(const boost::asio::ip::tcp::endpoint& endpoint) -> Result;
+
+        // Called only on _strand after construction.
+        auto StartAccepting() -> Result;
+        auto StopAccepting() -> Result;
 
         auto DoAccept() -> void;
+        auto OnAccept(const ErrorCode& errorCode, boost::asio::ip::tcp::socket acceptedSocket)
+            -> void;
 
     private:
+        IoContextPool::Strand _strand;
         boost::asio::ip::tcp::acceptor _acceptor;
 
         boost::asio::steady_timer _retryTimer;
         static constexpr auto RetryInterval = std::chrono::milliseconds(100);
 
-        std::atomic<Status> _status = Status::NotInitialized;
+        Status _status = Status::NotInitialized;
     };
 
 }   // namespace Flux

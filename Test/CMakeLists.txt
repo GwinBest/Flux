@@ -20,7 +20,7 @@ add_executable(${PROJECT_NAME}-Tests
         Core/IoContextPoolTest.cpp
 )
 
-target_link_libraries(${PROJECT_NAME}-Tests PRIVATE ${PROJECT_NAME} GTest::gtest_main)
+target_link_libraries(${PROJECT_NAME}-Tests PRIVATE ${PROJECT_NAME} GTest::gtest_main spdlog::spdlog)
 
 enable_asan(${PROJECT_NAME}-Tests)
 enable_coverage(${PROJECT_NAME}-Tests)

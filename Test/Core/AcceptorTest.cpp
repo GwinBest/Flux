@@ -8,8 +8,13 @@
 #include <chrono>
 #include <cstddef>
 #include <expected>
+#include <future>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 #include "Core/IoContextPool.hpp"
 
@@ -23,6 +28,31 @@ namespace Flux::Test
 
         constexpr std::size_t SingleThreadCount = 1U;
         constexpr unsigned short AnyPort = 0U;
+
+        auto Start(const std::shared_ptr<Acceptor>& acceptor) -> std::future<Result>
+        {
+            auto completion = std::make_shared<std::promise<Result>>();
+            auto future = completion->get_future();
+            acceptor->AsyncStartAccepting(
+                [completion](Result result) -> void { completion->set_value(std::move(result)); });
+            return future;
+        }
+
+        auto Stop(const std::shared_ptr<Acceptor>& acceptor) -> std::future<Result>
+        {
+            auto completion = std::make_shared<std::promise<Result>>();
+            auto future = completion->get_future();
+            acceptor->AsyncStopAccepting(
+                [completion](Result result) -> void { completion->set_value(std::move(result)); });
+            return future;
+        }
+
+        auto Await(std::future<Result> future) -> Result
+        {
+            if (future.wait_for(3s) != std::future_status::ready)
+                throw std::runtime_error("Acceptor command did not complete");
+            return future.get();
+        }
 
         template<typename TValue>
         auto ErrorMessage(const std::expected<TValue, ErrorCode>& result) -> std::string
@@ -59,7 +89,8 @@ namespace Flux::Test
 
     TEST(AcceptorFactoryTest, CreatesSharedAcceptorBoundToEndpoint)
     {
-        const IoContextPool pool(SingleThreadCount);
+        IoContextPool pool(SingleThreadCount);
+        ASSERT_TRUE(pool.Run().has_value());
 
         const auto acceptorResult = Acceptor::CreateAcceptor(pool.GetStrand(),
                                                              MakeLoopbackEndpoint());
@@ -67,21 +98,22 @@ namespace Flux::Test
         ASSERT_TRUE(acceptorResult.has_value()) << ErrorMessage(acceptorResult);
         const auto& acceptor = *acceptorResult;
         ASSERT_NE(acceptor, nullptr);
-        const auto stopResult = acceptor->StopAccepting();
+        const auto stopResult = Await(Stop(acceptor));
         EXPECT_TRUE(stopResult.has_value()) << ErrorMessage(stopResult);
     }
 
     TEST(AcceptorStartAcceptingTest, StartsAcceptingOnceFromInitializedState)
     {
-        const IoContextPool pool(SingleThreadCount);
+        IoContextPool pool(SingleThreadCount);
+        ASSERT_TRUE(pool.Run().has_value());
         const auto acceptorResult = Acceptor::CreateAcceptor(pool.GetStrand(),
                                                              MakeLoopbackEndpoint());
         ASSERT_TRUE(acceptorResult.has_value()) << ErrorMessage(acceptorResult);
         const auto& acceptor = *acceptorResult;
 
-        const auto startResult = acceptor->StartAccepting();
-        const auto repeatedStartResult = acceptor->StartAccepting();
-        const auto stopError = acceptor->StopAccepting();
+        const auto startResult = Await(Start(acceptor));
+        const auto repeatedStartResult = Await(Start(acceptor));
+        const auto stopError = Await(Stop(acceptor));
 
         EXPECT_TRUE(startResult.has_value()) << ErrorMessage(startResult);
         EXPECT_TRUE(stopError.has_value()) << ErrorMessage(stopError);
@@ -91,14 +123,15 @@ namespace Flux::Test
 
     TEST(AcceptorStartAcceptingTest, RejectsStartAfterStop)
     {
-        const IoContextPool pool(SingleThreadCount);
+        IoContextPool pool(SingleThreadCount);
+        ASSERT_TRUE(pool.Run().has_value());
         const auto acceptorResult = Acceptor::CreateAcceptor(pool.GetStrand(),
                                                              MakeLoopbackEndpoint());
         ASSERT_TRUE(acceptorResult.has_value()) << ErrorMessage(acceptorResult);
         const auto& acceptor = *acceptorResult;
 
-        const auto stopError = acceptor->StopAccepting();
-        const auto startResult = acceptor->StartAccepting();
+        const auto stopError = Await(Stop(acceptor));
+        const auto startResult = Await(Start(acceptor));
 
         EXPECT_TRUE(stopError.has_value()) << ErrorMessage(stopError);
         ASSERT_FALSE(startResult.has_value());
@@ -108,6 +141,7 @@ namespace Flux::Test
     TEST(AcceptorStartAcceptingTest, ListeningAcceptorAllowsClientConnection)
     {
         IoContextPool pool(SingleThreadCount);
+        ASSERT_TRUE(pool.Run().has_value());
         const auto endpoint = ReserveLoopbackEndpoint();
         const auto acceptorResult = Acceptor::CreateAcceptor(pool.GetStrand(), endpoint);
         ASSERT_TRUE(acceptorResult.has_value()) << ErrorMessage(acceptorResult);
@@ -116,18 +150,15 @@ namespace Flux::Test
         Tcp::socket client(clientContext);
         boost::system::error_code connectError;
 
-        const auto runResult = pool.Run();
-        EXPECT_TRUE(runResult.has_value()) << ErrorMessage(runResult);
-
-        const auto startResult = acceptor->StartAccepting();
+        const auto startResult = Await(Start(acceptor));
         EXPECT_TRUE(startResult.has_value()) << ErrorMessage(startResult);
 
         connectError = client.connect(endpoint, connectError);
 
         boost::system::error_code closeError;
-        connectError = client.close(closeError);
+        closeError = client.close(closeError);
 
-        const auto stopError = acceptor->StopAccepting();
+        const auto stopError = Await(Stop(acceptor));
         const auto stopResult = pool.Stop();
 
         EXPECT_FALSE(connectError) << connectError.message();
@@ -138,7 +169,8 @@ namespace Flux::Test
 
     TEST(AcceptorStopAcceptingTest, ClosesListeningSocket)
     {
-        const IoContextPool pool(SingleThreadCount);
+        IoContextPool pool(SingleThreadCount);
+        ASSERT_TRUE(pool.Run().has_value());
         const auto endpoint = ReserveLoopbackEndpoint();
         const auto acceptorResult = Acceptor::CreateAcceptor(pool.GetStrand(), endpoint);
         ASSERT_TRUE(acceptorResult.has_value()) << ErrorMessage(acceptorResult);
@@ -147,7 +179,7 @@ namespace Flux::Test
         Tcp::socket client(clientContext);
         boost::system::error_code connectError;
 
-        const auto stopError = acceptor->StopAccepting();
+        const auto stopError = Await(Stop(acceptor));
         connectError = client.connect(endpoint, connectError);
 
         EXPECT_TRUE(stopError.has_value()) << ErrorMessage(stopError);
@@ -156,16 +188,40 @@ namespace Flux::Test
 
     TEST(AcceptorStopAcceptingTest, DisallowsRepeatedStop)
     {
-        const IoContextPool pool(SingleThreadCount);
+        IoContextPool pool(SingleThreadCount);
+        ASSERT_TRUE(pool.Run().has_value());
         const auto acceptorResult = Acceptor::CreateAcceptor(pool.GetStrand(),
                                                              MakeLoopbackEndpoint());
         ASSERT_TRUE(acceptorResult.has_value()) << ErrorMessage(acceptorResult);
         const auto& acceptor = *acceptorResult;
 
-        const auto firstStopError = acceptor->StopAccepting();
-        const auto secondStopError = acceptor->StopAccepting();
+        const auto firstStopError = Await(Stop(acceptor));
+        const auto secondStopError = Await(Stop(acceptor));
 
         EXPECT_TRUE(firstStopError.has_value()) << ErrorMessage(firstStopError);
         EXPECT_FALSE(secondStopError.has_value()) << ErrorMessage(secondStopError);
+    }
+
+    TEST(AcceptorAsyncTest, QueuesCommandsAndKeepsObjectAliveUntilCompletion)
+    {
+        boost::asio::io_context context;
+        const auto strand = boost::asio::make_strand(context);
+        auto result = Acceptor::CreateAcceptor(strand, MakeLoopbackEndpoint());
+        ASSERT_TRUE(result.has_value());
+        auto acceptor = std::move(*result);
+        const std::weak_ptr weakAcceptor = acceptor;
+        auto started = Start(acceptor);
+        auto stopped = Stop(acceptor);
+
+        EXPECT_EQ(started.wait_for(0s), std::future_status::timeout);
+        EXPECT_EQ(stopped.wait_for(0s), std::future_status::timeout);
+        acceptor.reset();
+        EXPECT_FALSE(weakAcceptor.expired());
+
+        context.run();
+
+        EXPECT_TRUE(Await(std::move(started)).has_value());
+        EXPECT_TRUE(Await(std::move(stopped)).has_value());
+        EXPECT_TRUE(weakAcceptor.expired());
     }
 }   // namespace Flux::Test

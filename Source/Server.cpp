@@ -1,8 +1,12 @@
 #include "Server.hpp"
 
 #include <algorithm>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/error.hpp>
+#include <boost/system/system_error.hpp>
 #include <csignal>
+#include <future>
+#include <utility>
 
 #include "Utils/Log.hpp"
 
@@ -10,17 +14,20 @@ namespace Flux
 {
     Server::Server(const std::size_t threadCount, const Endpoint& endpoint)
         : _ioContextPool(std::max<std::size_t>(1, threadCount))
-        , _acceptor(Acceptor::CreateAcceptor(_ioContextPool.GetStrand(), endpoint).value())
         , _threadCount(std::max<std::size_t>(1, threadCount))
         , _signalSet(_ioContextPool.GetStrand(), SIGINT, SIGTERM)
         , _status(Status::Initialized)
     {
+        auto acceptorResult = Acceptor::CreateAcceptor(_ioContextPool.GetStrand(), endpoint);
+        if (!acceptorResult)
+            throw boost::system::system_error(acceptorResult.error(),
+                                              "Failed to create server acceptor");
+
+        _acceptor = std::move(*acceptorResult);
+
         _signalSet.async_wait([this](const ErrorCode& signalError, int signalNumber) -> void {
             if (signalError == boost::asio::error::operation_aborted)
-            {
-                DebugLog("Server signal wait cancelled");
                 return;
-            }
 
             if (signalError)
             {
@@ -28,11 +35,13 @@ namespace Flux
                 return;
             }
 
-            InfoLog("Shutdown requested by signal={}", signalNumber);
-
-            _status = Status::Stopping;
-
+            {
+                const std::scoped_lock lock(_mutex);
+                _status = Status::Stopping;
+            }
             _stoppedCondition.notify_all();
+
+            InfoLog("Shutdown requested by signal={}", signalNumber);
         });
     }
 
@@ -53,31 +62,38 @@ namespace Flux
             return std::unexpected(MakeErrorCode(Error::ServerNotInitialized));
         }
 
-        std::unique_lock lock(_mutex);
-
-        auto result = _acceptor->StartAccepting();
-
-        if (!result)
-            return result;
-
-        result = _ioContextPool.Run();
-
-        if (!result)
+        if (const auto poolResult = _ioContextPool.Run(); !poolResult)
         {
-            if (const auto acceptorStopResult = _acceptor->StopAccepting(); !acceptorStopResult)
-                ErrorLog("Failed to stop acceptor after io_context start error: {}",
-                         acceptorStopResult.error().message());
+            ErrorLog("Failed to start ioContextPool: {}\nStopping server...",
+                     poolResult.error().message());
 
-            _status = Status::Stopped;
-            _stoppedCondition.notify_all();
+            if (const auto result = Stop(); !result)
+                ErrorLog("Failed to stop server: {}", result.error().message());
 
-            return result;
+            return poolResult;
         }
 
-        _status = Status::Running;
+        auto completion = std::make_shared<std::promise<Result>>();
+        auto started = completion->get_future();
+        _acceptor->AsyncStartAccepting(
+            [completion](Result result) -> void { completion->set_value(std::move(result)); });
+        completion.reset();
 
-        _stoppedCondition.wait(lock, [this] -> bool { return _status == Status::Stopping; });
+        if (const auto startResult = started.get(); !startResult)
+        {
+            ErrorLog("Failed to start acceptor: {}\nStopping server...",
+                     startResult.error().message());
 
+            if (const auto result = Stop(); !result)
+                ErrorLog("Failed to stop server: {}", result.error().message());
+
+            return startResult;
+        }
+
+        std::unique_lock lock(_mutex);
+        _stoppedCondition.wait(lock, [this] -> bool {
+            return _status == Status::Stopping || _status == Status::Stopped;
+        });
         return {};
     }
 
@@ -101,12 +117,16 @@ namespace Flux
 
         if (_acceptor)
         {
-            if (const auto acceptorStopResult = _acceptor->StopAccepting(); !acceptorStopResult)
-            {
-                if (!firstError)
-                    firstError = acceptorStopResult.error();
+            auto completion = std::make_shared<std::promise<Result>>();
+            auto stopped = completion->get_future();
+            _acceptor->AsyncStopAccepting(
+                [completion](Result result) -> void { completion->set_value(std::move(result)); });
+            completion.reset();
 
-                ErrorLog("Failed to stop acceptor: {}", acceptorStopResult.error().message());
+            if (const auto stopResult = stopped.get(); !stopResult)
+            {
+                ErrorLog("Failed to stop acceptor");
+                return stopResult;
             }
         }
 

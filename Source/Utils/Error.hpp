@@ -1,6 +1,7 @@
 #pragma once
 
 #include <boost/system/error_code.hpp>
+#include <cstdint>
 #include <expected>
 #include <string>
 
@@ -17,6 +18,7 @@ namespace Flux
         AcceptorNotInitialized,
         AcceptorNotStarted,
         AcceptorAlreadyOpen,
+        IoContextPoolRunFromWorkerThread,
     };
 
     class ErrorCategory final : public boost::system::error_category
@@ -38,10 +40,10 @@ namespace Flux
             case Error::AcceptorNotInitialized: return "acceptor is not initialized";
             case Error::AcceptorNotStarted:     return "acceptor is not started";
             case Error::AcceptorAlreadyOpen:    return "acceptor already open";
-            default:                            return "unknown error";
+            case Error::IoContextPoolRunFromWorkerThread:
+                return "IO context pool cannot be started from one of its worker threads";
+            default: return "unknown error";
             }
-
-            return "unknown error";
         }
     };
 
