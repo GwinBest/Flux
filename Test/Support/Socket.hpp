@@ -19,7 +19,7 @@ namespace Flux::Test
                        SOL_SOCKET,
                        SO_EXCLUSIVEADDRUSE,
                        exclusive.data(),
-                       exclusive.size())
+                       static_cast<int>(exclusive.size()))
             != 0)
         {
             throw boost::system::system_error(WSAGetLastError(), boost::system::system_category());
@@ -29,3 +29,5 @@ namespace Flux::Test
         acceptor.listen();
     }
 }   // namespace Flux::Test
+
+f
