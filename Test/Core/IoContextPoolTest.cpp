@@ -3,10 +3,12 @@
 
 #include <chrono>
 #include <cstddef>
+#include <exception>
 #include <future>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 #include "boost/asio/post.hpp"
 
@@ -123,7 +125,7 @@ namespace Flux::Test
     {
         IoContextPool pool(SingleThreadCount);
         std::promise<void> continuationCalledPromise;
-        auto continuationCalled = continuationCalledPromise.get_future();
+        const auto continuationCalled = continuationCalledPromise.get_future();
 
         boost::asio::post(pool.GetStrand(),
                           [] -> void { throw std::runtime_error("expected handler failure"); });
@@ -139,6 +141,46 @@ namespace Flux::Test
 
         EXPECT_TRUE(stopResult.has_value()) << ErrorMessage(stopResult);
         EXPECT_EQ(handlerStatus, std::future_status::ready);
+    }
+
+    TEST(IoContextPoolRunTest, ContinuesAfterNonStandardExceptionFromHandler)
+    {
+        struct NonStandardFailure
+        {};
+
+        IoContextPool pool(SingleThreadCount);
+        std::promise<void> continued;
+        const auto continuation = continued.get_future();
+        const auto failure = std::make_exception_ptr(NonStandardFailure {});
+        boost::asio::post(pool.GetStrand(), [failure] -> void { std::rethrow_exception(failure); });
+        boost::asio::post(pool.GetStrand(), [&continued] -> void { continued.set_value(); });
+
+        ASSERT_TRUE(pool.Run().has_value());
+        const auto status = continuation.wait_for(FutureTimeout);
+        EXPECT_TRUE(pool.Stop().has_value());
+        EXPECT_EQ(status, std::future_status::ready);
+    }
+
+    TEST(IoContextPoolRunTest, MultipleWorkersDrainAllStrandHandlersInOrder)
+    {
+        IoContextPool pool(4);
+        std::vector<std::size_t> completed;
+        std::vector<std::size_t> expected;
+        bool allOnStrand = true;
+        constexpr std::size_t handlerCount = 100;
+        for (std::size_t index = 0; index < handlerCount; ++index)
+        {
+            expected.push_back(index);
+            boost::asio::post(pool.GetStrand(), [&pool, &completed, &allOnStrand, index] -> void {
+                allOnStrand = allOnStrand && pool.GetStrand().running_in_this_thread();
+                completed.push_back(index);
+            });
+        }
+
+        ASSERT_TRUE(pool.Run().has_value());
+        EXPECT_TRUE(pool.Stop().has_value());
+        EXPECT_TRUE(allOnStrand);
+        EXPECT_EQ(completed, expected);
     }
 
     TEST(IoContextPoolStopTest, RejectsStopBeforeRun)
@@ -237,5 +279,4 @@ namespace Flux::Test
 
         SUCCEED();
     }
-
 }   // namespace Flux::Test

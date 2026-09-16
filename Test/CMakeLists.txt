@@ -1,5 +1,7 @@
 include(FetchContent)
 
+enable_coverage(${PROJECT_NAME})
+
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 if (MSVC)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
@@ -18,6 +20,8 @@ add_executable(${PROJECT_NAME}-Tests
         ServerTest.cpp
         Core/AcceptorTest.cpp
         Core/IoContextPoolTest.cpp
+        Utils/ErrorTest.cpp
+        Utils/LogTest.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}-Tests PRIVATE ${PROJECT_NAME} GTest::gtest_main spdlog::spdlog)
