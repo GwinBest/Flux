@@ -13,6 +13,8 @@ option(BUILD_DEMO "Build demo executable" OFF)
 option(BUILD_TEST "Build tests" OFF)
 option(ENABLE_ASAN "Enable AddressSanitizer" ON)
 option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" ON)
+option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+option(ENABLE_SANITIZERS_STRICT "Fail configuration when a requested sanitizer is unsupported" OFF)
 option(ENABLE_COVERAGE "Enable code coverage flags for Clang/GCC" OFF)
 option(ENABLE_CLANG_TIDY "Enable clang-tidy checks for project targets" OFF)
 option(ENABLE_CLANG_FORMAT "Enable clang-format helper targets" ON)
@@ -46,6 +48,14 @@ include(CheckLinkerFlag)
 set(PROJECT_SANITIZER_COMPILE_FLAGS "")
 set(PROJECT_SANITIZER_LINK_FLAGS "")
 
+if (ENABLE_TSAN AND ENABLE_ASAN)
+    message(FATAL_ERROR "TSan and ASan cannot be enabled together. Set ENABLE_ASAN=OFF for TSan.")
+endif ()
+
+if (ENABLE_TSAN AND (MSVC OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU"))
+    message(FATAL_ERROR "TSan requires a supported GCC or Clang toolchain.")
+endif ()
+
 macro(append_sanitizer_if_supported sanitizer_name sanitizer_flag)
     string(MAKE_C_IDENTIFIER "${sanitizer_flag}" sanitizer_flag_id)
 
@@ -70,6 +80,11 @@ macro(append_sanitizer_if_supported sanitizer_name sanitizer_flag)
         list(APPEND PROJECT_SANITIZER_COMPILE_FLAGS "${sanitizer_flag}")
         list(APPEND PROJECT_SANITIZER_LINK_FLAGS "${sanitizer_flag}")
     else ()
+        if (ENABLE_SANITIZERS_STRICT)
+            message(FATAL_ERROR
+                    "${sanitizer_name} requested, but '${sanitizer_flag}' is not fully supported."
+            )
+        endif ()
         message(WARNING
                 "${sanitizer_name} requested, but '${sanitizer_flag}' is not fully supported by "
                 "${CMAKE_CXX_COMPILER_ID} (${CMAKE_CXX_COMPILER}). Skipping ${sanitizer_name}."
@@ -84,8 +99,14 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     if (ENABLE_UBSAN)
         append_sanitizer_if_supported("UBSan" "-fsanitize=undefined")
     endif ()
+    if (ENABLE_TSAN)
+        append_sanitizer_if_supported("TSan" "-fsanitize=thread")
+    endif ()
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     if (ENABLE_UBSAN)
+        if (ENABLE_SANITIZERS_STRICT)
+            message(FATAL_ERROR "UBSan is not supported by the MSVC toolchain.")
+        endif ()
         message(WARNING "UBSan is not supported by the MSVC toolchain and will be ignored.")
     endif ()
 endif ()
@@ -246,7 +267,8 @@ function(enable_sanitizers target_name)
         endforeach ()
 
         if ("-fsanitize=address" IN_LIST PROJECT_SANITIZER_COMPILE_FLAGS
-                OR "-fsanitize=leak" IN_LIST PROJECT_SANITIZER_COMPILE_FLAGS)
+                OR "-fsanitize=leak" IN_LIST PROJECT_SANITIZER_COMPILE_FLAGS
+                OR "-fsanitize=thread" IN_LIST PROJECT_SANITIZER_COMPILE_FLAGS)
             target_compile_options(${target_name} PRIVATE
                     $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
                     $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>
@@ -296,10 +318,12 @@ function(enable_coverage target_name)
 endfunction()
 
 function(enable_project_warnings target_name)
-    target_compile_options(${target_name} PRIVATE
-            $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX /EHsc>
-            $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wconversion -Wshadow -Werror>
-    )
+    if (MSVC)
+        # clang-cl uses the MSVC command-line interface as well.
+        target_compile_options(${target_name} PRIVATE /W4 /WX /EHsc)
+    else ()
+        target_compile_options(${target_name} PRIVATE -Wall -Wextra -Wconversion -Wshadow -Werror)
+    endif ()
 endfunction()
 
 add_subdirectory(Source)

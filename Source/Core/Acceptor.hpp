@@ -29,8 +29,6 @@ namespace Flux
 
         using CompletionHandler = std::function<void(Result)>;
 
-        // Completion runs on the strand, possibly inline. The io_context must be running
-        // to process queued commands; stop must complete before shutting it down.
         auto AsyncStartAccepting(CompletionHandler onStarted) -> void;
         auto AsyncStopAccepting(CompletionHandler onStopped) -> void;
 

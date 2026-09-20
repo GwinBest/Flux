@@ -4,6 +4,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/system/error_code.hpp>
 #include <chrono>
 #include <cstddef>
@@ -16,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "../Support/Socket.hpp"
 #include "Core/IoContextPool.hpp"
 
 namespace Flux::Test
@@ -28,6 +30,23 @@ namespace Flux::Test
 
         constexpr std::size_t SingleThreadCount = 1U;
         constexpr unsigned short AnyPort = 0U;
+
+        struct CompletionObservation
+        {
+            bool Called = false;
+            bool Inline = false;
+            bool OnStrand = false;
+            Result Outcome;
+        };
+
+        auto ExpectInlineSuccess(const CompletionObservation& observation, const char* operation)
+            -> void
+        {
+            SCOPED_TRACE(operation);
+            EXPECT_TRUE(observation.Inline);
+            EXPECT_TRUE(observation.OnStrand);
+            EXPECT_TRUE(observation.Outcome.has_value());
+        }
 
         auto Start(const std::shared_ptr<Acceptor>& acceptor) -> std::future<Result>
         {
@@ -78,6 +97,36 @@ namespace Flux::Test
             ignoredError = acceptor.close(ignoredError);
 
             return endpoint;
+        }
+
+        auto ExpectClientDisconnected(boost::asio::io_context& context,
+                                      const Tcp::endpoint& endpoint) -> void
+        {
+            boost::asio::io_context clients;
+            Tcp::socket client(clients);
+            client.connect(endpoint);
+            bool readCompleted = false;
+            ErrorCode readError;
+            std::size_t bytesRead = 0;
+            char byte = '\0';
+            client.async_read_some(boost::asio::buffer(&byte, 1),
+                                   [&](const ErrorCode& error, const std::size_t size) -> void {
+                                       readError = error;
+                                       bytesRead = size;
+                                       readCompleted = true;
+                                   });
+            // EOF proves that OnAccept processed and destroyed the accepted socket.
+            EXPECT_GT(context.run_one_for(3s), 0U);
+            clients.restart();
+            clients.run_for(3s);
+            EXPECT_TRUE(readCompleted);
+            EXPECT_EQ(bytesRead, 0U);
+            EXPECT_EQ(readError, boost::asio::error::eof);
+            ErrorCode closeError;
+            closeError = client.close(closeError);
+            EXPECT_FALSE(closeError) << closeError.message();
+            clients.restart();
+            clients.poll();
         }
     }   // namespace
 
@@ -223,5 +272,89 @@ namespace Flux::Test
         EXPECT_TRUE(Await(std::move(started)).has_value());
         EXPECT_TRUE(Await(std::move(stopped)).has_value());
         EXPECT_TRUE(weakAcceptor.expired());
+    }
+
+    TEST(AcceptorFactoryTest, ReturnsBindErrorForOccupiedEndpoint)
+    {
+        boost::asio::io_context context;
+        Tcp::acceptor occupied(context);
+        OccupyEndpoint(occupied);
+        const auto result = Acceptor::CreateAcceptor(boost::asio::make_strand(context),
+                                                     occupied.local_endpoint());
+        ASSERT_FALSE(result.has_value());
+        EXPECT_TRUE(result.error() == boost::asio::error::address_in_use
+                    || result.error() == boost::asio::error::access_denied)
+            << result.error().message();
+    }
+
+    TEST(AcceptorAsyncTest, CompletesInlineWhenCalledFromItsStrand)
+    {
+        boost::asio::io_context context;
+        const auto strand = boost::asio::make_strand(context);
+        const auto result = Acceptor::CreateAcceptor(strand, MakeLoopbackEndpoint());
+        ASSERT_TRUE(result.has_value());
+        CompletionObservation started;
+        CompletionObservation stopped;
+        const auto& acceptor = *result;
+
+        boost::asio::post(strand, [&] -> void {
+            acceptor->AsyncStartAccepting([&](const Result& startResult) -> void {
+                started.OnStrand = strand.running_in_this_thread();
+                started.Outcome = startResult;
+                started.Called = true;
+            });
+            started.Inline = started.Called;
+
+            acceptor->AsyncStopAccepting([&](const Result& stopResult) -> void {
+                stopped.OnStrand = strand.running_in_this_thread();
+                stopped.Outcome = stopResult;
+                stopped.Called = true;
+            });
+            stopped.Inline = stopped.Called;
+        });
+
+        context.run();
+        ExpectInlineSuccess(started, "start");
+        ExpectInlineSuccess(stopped, "stop");
+    }
+
+    TEST(AcceptorAsyncTest, PendingAcceptDoesNotKeepDestroyedAcceptorAlive)
+    {
+        boost::asio::io_context context;
+        auto result = Acceptor::CreateAcceptor(boost::asio::make_strand(context),
+                                               MakeLoopbackEndpoint());
+        ASSERT_TRUE(result.has_value());
+        auto acceptor = std::move(*result);
+        const std::weak_ptr weakAcceptor = acceptor;
+        auto started = Start(acceptor);
+        ASSERT_EQ(context.poll_one(), 1U);
+        ASSERT_TRUE(Await(std::move(started)).has_value());
+
+        acceptor.reset();
+        EXPECT_TRUE(weakAcceptor.expired());
+        context.run();
+        EXPECT_TRUE(context.stopped());
+    }
+
+    TEST(AcceptorAsyncTest, AcceptsSeveralClientsAndClosesEachSocket)
+    {
+        boost::asio::io_context context;
+        const auto endpoint = ReserveLoopbackEndpoint();
+        const auto result = Acceptor::CreateAcceptor(boost::asio::make_strand(context), endpoint);
+        ASSERT_TRUE(result.has_value());
+        auto started = Start(*result);
+        ASSERT_EQ(context.poll_one(), 1U);
+        ASSERT_TRUE(Await(std::move(started)).has_value());
+
+        for (int index = 0; index < 3; ++index)
+        {
+            SCOPED_TRACE(index);
+            ExpectClientDisconnected(context, endpoint);
+        }
+
+        auto stopped = Stop(*result);
+        context.run_for(3s);
+        EXPECT_TRUE(Await(std::move(stopped)).has_value());
+        EXPECT_TRUE(context.stopped());
     }
 }   // namespace Flux::Test

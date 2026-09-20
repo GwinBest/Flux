@@ -103,6 +103,146 @@ jobs:
         # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
         run: ctest --build-config ${{ matrix.build_type }} --output-on-failure
 
+  build-mingw:
+    name: MinGW (${{ matrix.build_type }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [ Debug, Release ]
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up MinGW
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+      - name: Configure CMake
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_CXX_COMPILER=g++
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DBUILD_TEST=ON
+          -DENABLE_CLANG_TIDY=OFF
+          -DENABLE_CLANG_FORMAT=OFF
+          -DENABLE_ASAN=OFF
+          -DENABLE_UBSAN=OFF
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --no-tests=error
+
+  build-clang-cl:
+    name: Windows clang-cl (${{ matrix.build_type }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [ Debug, Release ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure CMake
+        run: >
+          cmake -S . -B build -A x64 -T ClangCL
+          -DBUILD_TEST=ON
+          -DENABLE_CLANG_TIDY=OFF
+          -DENABLE_CLANG_FORMAT=OFF
+          -DENABLE_ASAN=OFF
+          -DENABLE_UBSAN=OFF
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel 2
+      - name: Test
+        run: ctest --test-dir build --build-config ${{ matrix.build_type }} --output-on-failure --no-tests=error
+
+  build-linux-extra:
+    name: Linux ${{ matrix.variant }} (${{ matrix.build_type }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: ASan + UBSan
+            os: ubuntu-24.04
+            build_type: Debug
+            compiler: clang++-22
+            packages: clang-22 libclang-rt-22-dev llvm-22
+            cmake_args: -DENABLE_ASAN=ON -DENABLE_UBSAN=ON
+          - variant: TSan
+            os: ubuntu-24.04
+            build_type: Debug
+            compiler: clang++-22
+            packages: clang-22 libclang-rt-22-dev llvm-22
+            cmake_args: -DENABLE_TSAN=ON
+          - variant: libc++
+            os: ubuntu-24.04
+            build_type: Debug
+            compiler: clang++-22
+            packages: clang-22 libc++-22-dev libc++abi-22-dev
+            cmake_args: -DCMAKE_CXX_FLAGS=-stdlib=libc++
+          - variant: libc++
+            os: ubuntu-24.04
+            build_type: Release
+            compiler: clang++-22
+            packages: clang-22 libc++-22-dev libc++abi-22-dev
+            cmake_args: -DCMAKE_CXX_FLAGS=-stdlib=libc++
+          - variant: ARM64
+            os: ubuntu-24.04-arm
+            build_type: Debug
+            compiler: g++-14
+            packages: g++-14
+            cmake_args: ''
+          - variant: ARM64
+            os: ubuntu-24.04-arm
+            build_type: Release
+            compiler: g++-14
+            packages: g++-14
+            cmake_args: ''
+    env:
+      ASAN_OPTIONS: halt_on_error=1:detect_leaks=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      TSAN_OPTIONS: halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compilers and libraries
+        run: |
+          # Chrome's repository can break apt updates on hosted runners.
+          for source in /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources; do
+            if [ -f "$source" ]; then
+              sudo mv "$source" "$source.disabled"
+            fi
+          done
+          if [ "${{ matrix.compiler }}" = "clang++-22" ]; then
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh 22
+          fi
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ${{ matrix.packages }}
+      - name: Configure CMake
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DBUILD_TEST=ON
+          -DENABLE_CLANG_TIDY=OFF
+          -DENABLE_CLANG_FORMAT=OFF
+          -DENABLE_ASAN=OFF
+          -DENABLE_UBSAN=OFF
+          -DENABLE_TSAN=OFF
+          -DENABLE_SANITIZERS_STRICT=ON
+          ${{ matrix.cmake_args }}
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --no-tests=error
+
   lint:
     runs-on: ubuntu-latest
 

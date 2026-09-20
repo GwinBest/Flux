@@ -1,5 +1,7 @@
 include(FetchContent)
 
+enable_coverage(${PROJECT_NAME})
+
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 if (MSVC)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
@@ -14,10 +16,23 @@ FetchContent_Declare(googletest
 )
 FetchContent_MakeAvailable(googletest)
 
+if (MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    # GoogleTest 1.17 enables /WX internally. Clang 21+ diagnoses its char8_t
+    # printer; keep that warning non-fatal only while building GoogleTest.
+    # https://github.com/google/googletest/issues/4948
+    check_cxx_compiler_flag("-Wno-error=character-conversion" GTEST_HAS_NO_ERROR_CHARACTER_CONVERSION)
+    if (GTEST_HAS_NO_ERROR_CHARACTER_CONVERSION)
+        target_compile_options(gtest PRIVATE -Wno-error=character-conversion)
+        target_compile_options(gtest_main PRIVATE -Wno-error=character-conversion)
+    endif ()
+endif ()
+
 add_executable(${PROJECT_NAME}-Tests
         ServerTest.cpp
         Core/AcceptorTest.cpp
         Core/IoContextPoolTest.cpp
+        Utils/ErrorTest.cpp
+        Utils/LogTest.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}-Tests PRIVATE ${PROJECT_NAME} GTest::gtest_main spdlog::spdlog)

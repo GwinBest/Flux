@@ -39,6 +39,10 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
 
 add_library(${PROJECT_NAME} ${SOURCES})
 
+if (MINGW)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC BOOST_ASIO_HAS_PTHREADS=1)
+endif ()
+
 target_link_libraries(${PROJECT_NAME}
         PUBLIC ${BOOST_ASIO_TARGET}
         PRIVATE ${SPDLOG_TARGET}
