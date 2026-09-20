@@ -28,7 +28,7 @@ namespace Flux
             -> std::expected<std::shared_ptr<Acceptor>, ErrorCode>;
 
         using CompletionHandler = std::function<void(Result)>;
-        
+
         auto AsyncStartAccepting(CompletionHandler onStarted) -> void;
         auto AsyncStopAccepting(CompletionHandler onStopped) -> void;
 
