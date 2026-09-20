@@ -29,6 +29,8 @@ namespace Flux
 
     auto IoContextPool::Run() -> Result
     {
+        const std::unique_lock lock(_mutex);
+
         if (_status != Status::Started)
         {
             WarnLog("Run rejected: io_context pool is not in Started state");
@@ -37,28 +39,45 @@ namespace Flux
 
         for (std::size_t i = 0; i < _threadCount; ++i)
         {
-            _threads.emplace_back([this, workerIndex = i] -> void {
-                while (!_ioContext.stopped())
-                {
-                    try
+            try
+            {
+                _threads.emplace_back([this, workerIndex = i] -> void {
+                    while (!_ioContext.stopped())
                     {
-                        _ioContext.run();
+                        try
+                        {
+                            _ioContext.run();
+                        }
+                        catch (const std::exception& e)
+                        {
+                            ErrorLog("io_context handler threw exception on worker index={}: {}",
+                                     workerIndex,
+                                     e.what());
+                        }
+                        catch (...)
+                        {
+                            ErrorLog(
+                                "io_context handler threw unknown exception on worker index={}",
+                                workerIndex);
+                        }
                     }
-                    catch (const std::exception& e)
-                    {
-                        ErrorLog("io_context handler threw exception on worker index={}: {}",
-                                 workerIndex,
-                                 e.what());
-                    }
-                    catch (...)
-                    {
-                        ErrorLog("io_context handler threw unknown exception on worker index={}",
-                                 workerIndex);
-                    }
-                }
 
-                DebugLog("io_context worker stopped: index={}", workerIndex);
-            });
+                    DebugLog("io_context worker stopped: index={}", workerIndex);
+                });
+            }
+            catch (std::exception& e)
+            {
+                ErrorLog("Cannot create io_context thread: {}", e.what());
+
+                _workGuard.reset();
+                _ioContext.stop();
+
+                _threads.clear();
+
+                _status = Status::NotInitialized;
+
+                return std::unexpected(MakeErrorCode(Error::IoContextPoolNotStarted));
+            }
         }
 
         _status = Status::Running;
@@ -70,6 +89,8 @@ namespace Flux
 
     auto IoContextPool::Stop() -> Result
     {
+        const std::unique_lock lock(_mutex);
+
         if (_status != Status::Running)
         {
             WarnLog("Stop rejected: io_context pool is not in Running state");
