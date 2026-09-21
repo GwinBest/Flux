@@ -233,7 +233,7 @@ namespace Flux::Test
         EXPECT_NE(*first, *second);
 
         Poll();
-        
+
         ASSERT_EQ(_completions->size(), 1U);
         EXPECT_TRUE(_completions->front());
         EXPECT_TRUE(_manager.CloseConnection(*second));

@@ -404,7 +404,7 @@ namespace Flux::Test
             context.run_for(50ms);
             ExpectClientConnected(clients.back());
         }
-        
+
         auto stopped = Stop(*result);
         context.run_for(3s);
         EXPECT_TRUE(Await(std::move(stopped)).has_value());
