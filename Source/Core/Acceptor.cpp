@@ -9,6 +9,12 @@
 
 namespace Flux
 {
+    Acceptor::~Acceptor()
+    {
+        if (const auto result = _connectionManager.CloseAllConnections(); !result)
+            ErrorLog("Failed to schedule connection shutdown: {}", result.error().message());
+    }
+
     auto Acceptor::AsyncStartAccepting(CompletionHandler onStarted) -> void
     {
         boost::asio::dispatch(
@@ -99,6 +105,13 @@ namespace Flux
         else
         {
             DebugLog("Acceptor stop requested while socket is already closed");
+        }
+
+        if (const auto result = _connectionManager.CloseAllConnections(); !result)
+        {
+            if (!firstError)
+                firstError = result.error();
+            ErrorLog("Failed to schedule connection shutdown: {}", result.error().message());
         }
 
         if (firstError)
@@ -214,7 +227,10 @@ namespace Flux
                         remoteEndpoint.port());
             }
 
-            // TODO: handle client
+            if (const auto result = _connectionManager.CreateAndStartConnection(
+                    std::move(acceptedSocket));
+                !result)
+                ErrorLog("Failed to create accepted connection: {}", result.error().message());
         }
         else if (errorCode == boost::asio::error::operation_aborted)
         {

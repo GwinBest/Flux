@@ -49,6 +49,7 @@ namespace Flux::Test
             {
                 _previousLogger = spdlog::default_logger();
                 _sink = std::make_shared<RecordingSink>();
+
                 auto logger = std::make_shared<spdlog::logger>("test", _sink);
                 logger->set_level(spdlog::level::trace);
                 spdlog::set_default_logger(std::move(logger));
@@ -67,18 +68,25 @@ namespace Flux::Test
     {
         const auto location = std::source_location::current();
         const LogMessage literal("literal", location);
+
         const std::string owned = "owned";
         const LogMessage string(owned, location);
+
         constexpr std::string_view view("prefix suffix", 6);
         const LogMessage substring(view, location);
+
         const auto* pointer = "pointer";
         const LogMessage pointed(pointer, location);
 
         EXPECT_EQ(literal.Text, "literal");
         EXPECT_EQ(string.Text, owned);
+
         EXPECT_EQ(substring.Text, "prefix");
+
         EXPECT_EQ(pointed.Text, "pointer");
+
         EXPECT_EQ(string.Text.data(), owned.data());
+
         EXPECT_EQ(literal.Location.line(), location.line());
         EXPECT_STREQ(literal.Location.file_name(), location.file_name());
         EXPECT_STREQ(literal.Location.function_name(), location.function_name());
@@ -93,10 +101,13 @@ namespace Flux::Test
     {
         DebugLog("debug {}", 1);
         DebugLog("debug");
+
         InfoLog("info {}", 2);
         InfoLog("info");
+
         WarnLog("warn {}", 3);
         WarnLog("warn");
+
         ErrorLog("error {}", 4);
         ErrorLog("error");
 
@@ -119,8 +130,10 @@ namespace Flux::Test
     TEST_F(LogTest, PreservesBracesWithoutArgumentsAndFormatsRuntimeText)
     {
         InfoLog("unformatted {braces}");
+
         const std::string pattern = "{} = {:.2f}";
         constexpr double formattedValue = 1.25;
+
         InfoLog(pattern, std::string("value"), formattedValue);
         InfoLog(std::string_view {});
 

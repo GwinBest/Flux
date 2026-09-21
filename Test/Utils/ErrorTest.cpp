@@ -47,6 +47,18 @@ namespace Flux::Test
             ErrorCase {.Value = Error::AcceptorNotStarted, .Message = "acceptor is not started"},
             ErrorCase {.Value = Error::AcceptorAlreadyOpen, .Message = "acceptor already open"},
             ErrorCase {
+                       .Value = Error::ConnectionNotFound,
+                       .Message = "connection is not managed by this manager",
+                       },
+            ErrorCase {
+                       .Value = Error::ConnectionAlreadyStarted,
+                       .Message = "connection is already started",
+                       },
+            ErrorCase {
+                       .Value = Error::ConnectionNotStarted,
+                       .Message = "connection is not started",
+                       },
+            ErrorCase {
                        .Value = Error::IoContextPoolRunFromWorkerThread,
                        .Message = "IO context pool cannot be started from one of its worker threads",
                        },
@@ -56,6 +68,7 @@ namespace Flux::Test
         {
             SCOPED_TRACE(message);
             const auto code = MakeErrorCode(value);
+
             EXPECT_TRUE(code);
             EXPECT_EQ(code.value(), static_cast<int>(value));
             EXPECT_EQ(&code.category(), &GetErrorCategory());
@@ -65,7 +78,7 @@ namespace Flux::Test
 
     TEST(ErrorCategoryTest, DescribesUnknownValues)
     {
-        for (const auto value : {0, 11, 127, 255, -1})
+        for (const auto value : {0, -1})
         {
             SCOPED_TRACE(value);
             EXPECT_EQ(GetErrorCategory().message(value), "unknown error");

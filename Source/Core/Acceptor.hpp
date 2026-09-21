@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "Core/IoContextPool.hpp"
+#include "Core/ConnectionManager.hpp"
 #include "Utils/Error.hpp"
 
 namespace Flux
@@ -21,7 +22,7 @@ namespace Flux
         Acceptor(Acceptor&&) = delete;
         auto operator=(Acceptor&&) -> Acceptor& = delete;
 
-        ~Acceptor() = default;
+        ~Acceptor();
 
         static auto CreateAcceptor(const IoContextPool::Strand& strand,
                                    const boost::asio::ip::tcp::endpoint& endpoint)
@@ -57,6 +58,7 @@ namespace Flux
     private:
         IoContextPool::Strand _strand;
         boost::asio::ip::tcp::acceptor _acceptor;
+        ConnectionManager _connectionManager;
 
         boost::asio::steady_timer _retryTimer;
         static constexpr auto RetryInterval = std::chrono::milliseconds(100);

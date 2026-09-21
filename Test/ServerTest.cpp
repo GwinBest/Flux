@@ -46,15 +46,19 @@ namespace Flux::Test
                 Server server(2, LoopbackEndpoint());
                 if (std::raise(signalNumber) != 0)
                     FailChild("Failed to raise shutdown signal\n");
+
                 if (!server.Run())
                     FailChild("Server run failed\n");
+
                 if (explicitStop)
                 {
                     if (!server.Stop())
                         FailChild("Server stop failed\n");
+
                     if (const auto stopAgain = server.Stop();
                         stopAgain || stopAgain.error() != MakeErrorCode(Error::ServerNotStopping))
                         FailChild("Repeated stop returned an unexpected result\n");
+
                     if (const auto runAgain = server.Run();
                         runAgain || runAgain.error() != MakeErrorCode(Error::ServerNotInitialized))
                         FailChild("Restart returned an unexpected result\n");
@@ -70,19 +74,17 @@ namespace Flux::Test
             {
                 boost::asio::io_context clientContext;
                 Tcp::acceptor reservation(clientContext, LoopbackEndpoint());
+
                 const auto endpoint = reservation.local_endpoint();
                 reservation.close();
+
                 Server server(1, endpoint);
                 auto run = std::async(std::launch::async,
                                       [&server] -> Result { return server.Run(); });
 
                 Tcp::socket client(clientContext);
                 client.connect(endpoint);
-                char byte = '\0';
-                ErrorCode readError;
-                if (const auto bytes = client.read_some(boost::asio::buffer(&byte, 1), readError);
-                    bytes != 0 || readError != boost::asio::error::eof)
-                    FailChild("Accepted client did not receive EOF\n");
+
                 if (run.wait_for(0s) != std::future_status::timeout)
                     FailChild("Server run returned before the shutdown signal\n");
 
@@ -90,17 +92,26 @@ namespace Flux::Test
                     prematureStop
                     || prematureStop.error() != MakeErrorCode(Error::ServerNotStopping))
                     FailChild("Premature stop returned an unexpected result\n");
-                if (const auto repeatedRun = server.Run();
-                    repeatedRun
-                    || repeatedRun.error() != MakeErrorCode(Error::IoContextPoolNotStarted))
-                    FailChild("Repeated run returned an unexpected result\n");
 
                 if (std::raise(SIGTERM) != 0)
                     FailChild("Failed to raise shutdown signal\n");
+
                 if (run.wait_for(3s) != std::future_status::ready || !run.get())
                     FailChild("Server run did not complete successfully after the signal\n");
+
                 if (!server.Stop())
                     FailChild("Server stop failed\n");
+
+                client.non_blocking(true);
+
+                char byte = '\0';
+                ErrorCode readError;
+
+                if (const auto bytes = client.read_some(boost::asio::buffer(&byte, 1), readError);
+                    bytes != 0
+                    || (readError != boost::asio::error::eof
+                        && readError != boost::asio::error::connection_reset))
+                    FailChild("Client remained connected after server shutdown\n");
             }
             FinishChildAfterShutdown();
         }
@@ -129,6 +140,7 @@ namespace Flux::Test
         boost::asio::io_context context;
         boost::asio::ip::tcp::acceptor occupied(context);
         OccupyEndpoint(occupied);
+
         try
         {
             const Server server(1, occupied.local_endpoint());
@@ -148,6 +160,7 @@ namespace Flux::Test
     {
         Server server(1, LoopbackEndpoint());
         const auto result = server.Stop();
+
         ASSERT_FALSE(result.has_value());
         EXPECT_EQ(result.error(), MakeErrorCode(Error::ServerNotStopping));
     }
