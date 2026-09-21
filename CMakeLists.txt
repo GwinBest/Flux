@@ -298,7 +298,7 @@ function(enable_coverage target_name)
 
     if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(${target_name} PRIVATE --coverage -O0 -g)
-        target_link_options(${target_name} PRIVATE --coverage)
+        target_link_options(${target_name} PUBLIC --coverage)
     elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         target_compile_options(${target_name} PRIVATE
                 -fprofile-instr-generate
@@ -306,7 +306,7 @@ function(enable_coverage target_name)
                 -O0
                 -g
         )
-        target_link_options(${target_name} PRIVATE
+        target_link_options(${target_name} PUBLIC
                 -fprofile-instr-generate
                 -fcoverage-mapping
         )
