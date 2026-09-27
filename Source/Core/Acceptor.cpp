@@ -188,7 +188,7 @@ namespace Flux
 
         const auto weakSelf = weak_from_this();
 
-        _acceptor.async_accept([weakSelf](const boost::system::error_code& errorCode,
+        _acceptor.async_accept([weakSelf](const ErrorCode& errorCode,
                                           boost::asio::ip::tcp::socket acceptedSocket) -> void {
             const auto self = weakSelf.lock();
 
@@ -236,7 +236,7 @@ namespace Flux
             _retryTimer.expires_after(RetryInterval);
 
             _retryTimer.async_wait(
-                [weakSelf = weak_from_this()](const boost::system::error_code& timerError) -> void {
+                [weakSelf = weak_from_this()](const ErrorCode& timerError) -> void {
                     const auto retrySelf = weakSelf.lock();
                     if (!retrySelf || retrySelf->_status != Status::Started)
                         return;
