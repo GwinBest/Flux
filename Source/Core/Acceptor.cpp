@@ -9,22 +9,30 @@
 
 namespace Flux
 {
-    auto Acceptor::AsyncStartAccepting(CompletionHandler onStarted) -> void
+    auto Acceptor::AsyncStartAccepting() -> std::future<Result>
     {
-        boost::asio::dispatch(
-            _strand,
-            [self = shared_from_this(), onStarted = std::move(onStarted)] -> void {
-                onStarted(self->StartAccepting());
-            });
+        std::packaged_task<Result()> task([self = shared_from_this()] mutable -> Result {
+            const auto acceptor = std::move(self);
+            return acceptor->StartAccepting();
+        });
+
+        auto future = task.get_future();
+        boost::asio::dispatch(_strand, [task = std::move(task)] mutable -> void { task(); });
+
+        return future;
     }
 
-    auto Acceptor::AsyncStopAccepting(CompletionHandler onStopped) -> void
+    auto Acceptor::AsyncStopAccepting() -> std::future<Result>
     {
-        boost::asio::dispatch(
-            _strand,
-            [self = shared_from_this(), onStopped = std::move(onStopped)] -> void {
-                onStopped(self->StopAccepting());
-            });
+        std::packaged_task<Result()> task([self = shared_from_this()] mutable -> Result {
+            const auto acceptor = std::move(self);
+            return acceptor->StopAccepting();
+        });
+
+        auto future = task.get_future();
+        boost::asio::dispatch(_strand, [task = std::move(task)] mutable -> void { task(); });
+
+        return future;
     }
 
     auto Acceptor::CreateAcceptor(const IoContextPool::Strand& strand,

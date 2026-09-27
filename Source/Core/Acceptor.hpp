@@ -5,7 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <expected>
-#include <functional>
+#include <future>
 #include <memory>
 
 #include "Core/IoContextPool.hpp"
@@ -27,10 +27,8 @@ namespace Flux
                                    const boost::asio::ip::tcp::endpoint& endpoint)
             -> std::expected<std::shared_ptr<Acceptor>, ErrorCode>;
 
-        using CompletionHandler = std::function<void(Result)>;
-
-        auto AsyncStartAccepting(CompletionHandler onStarted) -> void;
-        auto AsyncStopAccepting(CompletionHandler onStopped) -> void;
+        auto AsyncStartAccepting() -> std::future<Result>;
+        auto AsyncStopAccepting() -> std::future<Result>;
 
     private:
         enum class Status : std::uint8_t
@@ -46,7 +44,6 @@ namespace Flux
 
         auto Open(const boost::asio::ip::tcp::endpoint& endpoint) -> Result;
 
-        // Called only on _strand after construction.
         auto StartAccepting() -> Result;
         auto StopAccepting() -> Result;
 

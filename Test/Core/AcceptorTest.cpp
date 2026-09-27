@@ -31,39 +31,14 @@ namespace Flux::Test
         constexpr std::size_t SingleThreadCount = 1U;
         constexpr unsigned short AnyPort = 0U;
 
-        struct CompletionObservation
-        {
-            bool Called = false;
-            bool Inline = false;
-            bool OnStrand = false;
-            Result Outcome;
-        };
-
-        auto ExpectInlineSuccess(const CompletionObservation& observation, const char* operation)
-            -> void
-        {
-            SCOPED_TRACE(operation);
-            EXPECT_TRUE(observation.Inline);
-            EXPECT_TRUE(observation.OnStrand);
-            EXPECT_TRUE(observation.Outcome.has_value());
-        }
-
         auto Start(const std::shared_ptr<Acceptor>& acceptor) -> std::future<Result>
         {
-            auto completion = std::make_shared<std::promise<Result>>();
-            auto future = completion->get_future();
-            acceptor->AsyncStartAccepting(
-                [completion](Result result) -> void { completion->set_value(std::move(result)); });
-            return future;
+            return acceptor->AsyncStartAccepting();
         }
 
         auto Stop(const std::shared_ptr<Acceptor>& acceptor) -> std::future<Result>
         {
-            auto completion = std::make_shared<std::promise<Result>>();
-            auto future = completion->get_future();
-            acceptor->AsyncStopAccepting(
-                [completion](Result result) -> void { completion->set_value(std::move(result)); });
-            return future;
+            return acceptor->AsyncStopAccepting();
         }
 
         auto Await(std::future<Result> future) -> Result
@@ -293,29 +268,22 @@ namespace Flux::Test
         const auto strand = boost::asio::make_strand(context);
         const auto result = Acceptor::CreateAcceptor(strand, MakeLoopbackEndpoint());
         ASSERT_TRUE(result.has_value());
-        CompletionObservation started;
-        CompletionObservation stopped;
+        bool commandsCompleted = false;
         const auto& acceptor = *result;
 
         boost::asio::post(strand, [&] -> void {
-            acceptor->AsyncStartAccepting([&](const Result& startResult) -> void {
-                started.OnStrand = strand.running_in_this_thread();
-                started.Outcome = startResult;
-                started.Called = true;
-            });
-            started.Inline = started.Called;
+            auto started = acceptor->AsyncStartAccepting();
+            ASSERT_EQ(started.wait_for(0s), std::future_status::ready);
+            EXPECT_TRUE(started.get().has_value());
 
-            acceptor->AsyncStopAccepting([&](const Result& stopResult) -> void {
-                stopped.OnStrand = strand.running_in_this_thread();
-                stopped.Outcome = stopResult;
-                stopped.Called = true;
-            });
-            stopped.Inline = stopped.Called;
+            auto stopped = acceptor->AsyncStopAccepting();
+            ASSERT_EQ(stopped.wait_for(0s), std::future_status::ready);
+            EXPECT_TRUE(stopped.get().has_value());
+            commandsCompleted = true;
         });
 
         context.run();
-        ExpectInlineSuccess(started, "start");
-        ExpectInlineSuccess(stopped, "stop");
+        EXPECT_TRUE(commandsCompleted);
     }
 
     TEST(AcceptorAsyncTest, PendingAcceptDoesNotKeepDestroyedAcceptorAlive)

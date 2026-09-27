@@ -73,11 +73,7 @@ namespace Flux
             return poolResult;
         }
 
-        auto completion = std::make_shared<std::promise<Result>>();
-        auto started = completion->get_future();
-        _acceptor->AsyncStartAccepting(
-            [completion](Result result) -> void { completion->set_value(std::move(result)); });
-        completion.reset();
+        auto started = _acceptor->AsyncStartAccepting();
 
         if (const auto startResult = started.get(); !startResult)
         {
@@ -117,11 +113,7 @@ namespace Flux
 
         if (_acceptor)
         {
-            auto completion = std::make_shared<std::promise<Result>>();
-            auto stopped = completion->get_future();
-            _acceptor->AsyncStopAccepting(
-                [completion](Result result) -> void { completion->set_value(std::move(result)); });
-            completion.reset();
+            auto stopped = _acceptor->AsyncStopAccepting();
 
             if (const auto stopResult = stopped.get(); !stopResult)
             {
