@@ -286,13 +286,15 @@ namespace Flux::Test
     TEST(ServerSignalDeathTest, InterruptAllowsExplicitStopAndRejectsRestart)
     {
         ASSERT_EXIT(RunChildWithDeadline([] { SignalLifecycle(SIGINT, true); }),
-                    testing::ExitedWithCode(0), "");
+                    testing::ExitedWithCode(0),
+                    "");
     }
 
     TEST(ServerSignalDeathTest, TerminationAllowsExplicitStopAndRejectsRestart)
     {
         ASSERT_EXIT(RunChildWithDeadline([] { SignalLifecycle(SIGTERM, true); }),
-                    testing::ExitedWithCode(0), "");
+                    testing::ExitedWithCode(0),
+                    "");
     }
 
     TEST(ServerSignalDeathTest, DestructorStopsAfterShutdownRequest)
@@ -305,7 +307,8 @@ namespace Flux::Test
     TEST(ServerSignalDeathTest, SignalBeforeRunDoesNotDeadlockSingleWorker)
     {
         ASSERT_EXIT(RunChildWithDeadline([] { SignalLifecycle(SIGTERM, true, 1); }),
-                    testing::ExitedWithCode(0), "");
+                    testing::ExitedWithCode(0),
+                    "");
     }
 
     TEST(ServerSignalDeathTest, ServesClientAndWaitsForSignalDuringRun)
@@ -346,7 +349,8 @@ namespace Flux::Test
     TEST(ServerSignalDeathTest, ConcurrentStopHasExactlyOneWinner)
     {
         ASSERT_EXIT(RunChildWithDeadline([] { ConcurrentLifecycle(false); }),
-                    testing::ExitedWithCode(0), "");
+                    testing::ExitedWithCode(0),
+                    "");
     }
 
 }   // namespace Flux::Test

@@ -8,6 +8,7 @@
 #include <future>
 #include <memory>
 
+#include "ConnectionManager.hpp"
 #include "Core/IoContextPool.hpp"
 #include "Utils/Error.hpp"
 
@@ -57,6 +58,8 @@ namespace Flux
 
         boost::asio::steady_timer _retryTimer;
         static constexpr auto RetryInterval = std::chrono::milliseconds(100);
+
+        ConnectionManager _connectionManager;
 
         Status _status = Status::NotInitialized;
     };

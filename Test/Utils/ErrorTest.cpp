@@ -22,6 +22,13 @@ namespace Flux::Test
         };
 
         constexpr std::array cases {
+            ErrorCase {.Value = Error::ConnectionAlreadyStarted,
+                       .Message = "connection is already started"},
+            ErrorCase {.Value = Error::ConnectionNotStarted,
+                       .Message = "connection is not started"},
+            ErrorCase {.Value = Error::ConnectionClosed, .Message = "connection is closed"},
+            ErrorCase {.Value = Error::ConnectionException,
+                       .Message = "connection operation threw an exception"},
             ErrorCase {
                        .Value = Error::ServerNotInitialized,
                        .Message = "server is not initialized",
@@ -65,7 +72,7 @@ namespace Flux::Test
 
     TEST(ErrorCategoryTest, DescribesUnknownValues)
     {
-        for (const auto value : {0, 11, 127, 255, -1})
+        for (const auto value : {0, 15, 127, 255, -1})
         {
             SCOPED_TRACE(value);
             EXPECT_EQ(GetErrorCategory().message(value), "unknown error");

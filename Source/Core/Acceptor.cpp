@@ -109,6 +109,11 @@ namespace Flux
             DebugLog("Acceptor stop requested while socket is already closed");
         }
 
+        if (const auto result = _connectionManager.CloseAllConnections(); !result && !firstError)
+        {
+            firstError = result.error();
+        }
+
         if (firstError)
             return std::unexpected(firstError);
 
@@ -222,7 +227,13 @@ namespace Flux
                         remoteEndpoint.port());
             }
 
-            // TODO: handle client
+            if (const auto connectionResult = _connectionManager.CreateAndStartConnection(
+                    std::move(acceptedSocket));
+                !connectionResult)
+            {
+                ErrorLog("Failed to start accepted client connection: {}",
+                         connectionResult.error().message());
+            }
         }
         else if (errorCode == boost::asio::error::operation_aborted)
         {
