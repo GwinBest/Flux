@@ -37,7 +37,7 @@ namespace Flux
 
             {
                 const std::scoped_lock lock(_mutex);
-               
+
                 if (_status == Status::Starting)
                     _shutdownRequested = true;
                 else if (_status == Status::Running)

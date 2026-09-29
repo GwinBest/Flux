@@ -9,30 +9,34 @@
 
 namespace Flux
 {
+    namespace
+    {
+        template<typename Operation>
+        auto DispatchOperation(const boost::asio::any_io_executor& executor, Operation&& operation)
+            -> std::future<Result>
+        {
+            std::packaged_task<Result()> task(std::forward<Operation>(operation));
+            auto future = task.get_future();
+
+            boost::asio::dispatch(executor, [task = std::move(task)] mutable -> void { task(); });
+            return future;
+        }
+    }   // namespace
+
     auto Acceptor::AsyncStartAccepting() -> std::future<Result>
     {
-        std::packaged_task<Result()> task([self = shared_from_this()] mutable -> Result {
+        return DispatchOperation(_strand, [self = shared_from_this()] mutable -> Result {
             const auto acceptor = std::move(self);
             return acceptor->StartAccepting();
         });
-
-        auto future = task.get_future();
-        boost::asio::dispatch(_strand, [task = std::move(task)] mutable -> void { task(); });
-
-        return future;
     }
 
     auto Acceptor::AsyncStopAccepting() -> std::future<Result>
     {
-        std::packaged_task<Result()> task([self = shared_from_this()] mutable -> Result {
+        return DispatchOperation(_strand, [self = shared_from_this()] mutable -> Result {
             const auto acceptor = std::move(self);
             return acceptor->StopAccepting();
         });
-
-        auto future = task.get_future();
-        boost::asio::dispatch(_strand, [task = std::move(task)] mutable -> void { task(); });
-
-        return future;
     }
 
     auto Acceptor::CreateAcceptor(const IoContextPool::Strand& strand,

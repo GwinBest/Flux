@@ -1,18 +1,19 @@
 #include "Core/ConnectionManager.hpp"
-#include "Core/Connection.hpp"
 #include "gtest/gtest.h"
-#include "../Support/Async.hpp"
-#include "Core/IoContextPool.hpp"
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/post.hpp>
 #include <memory>
-#include <utility>
 #include <thread>
-#include <vector>
 #include <type_traits>
+#include <utility>
+#include <vector>
+
+#include "../Support/Async.hpp"
+#include "Core/Connection.hpp"
+#include "Core/IoContextPool.hpp"
 
 namespace Flux::Test
 {
@@ -109,8 +110,7 @@ namespace Flux::Test
         callers.clear();
         EXPECT_TRUE(manager.CloseAllConnections().has_value());
         EXPECT_TRUE(pool.Stop().has_value());
-        for (const auto& connection : connections)
-            EXPECT_TRUE(connection.expired());
+        for (const auto& connection : connections) EXPECT_TRUE(connection.expired());
     }
 
     TEST(ConnectionManagerTest, BulkCloseShutsDownActivePeersAndReleasesConnections)
@@ -135,8 +135,7 @@ namespace Flux::Test
         }
         EXPECT_TRUE(manager.CloseAllConnections().has_value());
         EXPECT_TRUE(pool.Stop().has_value());
-        for (const auto& connection : connections)
-            EXPECT_TRUE(connection.expired());
+        for (const auto& connection : connections) EXPECT_TRUE(connection.expired());
         for (auto& peer : peers)
         {
             char byte = 0;
@@ -150,7 +149,8 @@ namespace Flux::Test
                                  });
             ASSERT_TRUE(PumpUntil(clients, [&] { return completed; }));
             EXPECT_TRUE(error == boost::asio::error::eof
-                        || error == boost::asio::error::connection_reset) << error.message();
+                        || error == boost::asio::error::connection_reset)
+                << error.message();
         }
     }
 
@@ -221,4 +221,4 @@ namespace Flux::Test
         EXPECT_TRUE(weakSecond.expired());
         EXPECT_TRUE(manager.CloseAllConnections().has_value());
     }
-}
+}   // namespace Flux::Test

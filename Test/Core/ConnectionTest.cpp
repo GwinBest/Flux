@@ -1,7 +1,5 @@
 #include "Core/Connection.hpp"
-#include "Core/ConnectionManager.hpp"
 #include "gtest/gtest.h"
-#include "../Support/Async.hpp"
 
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/read.hpp>
@@ -11,6 +9,9 @@
 #include <chrono>
 #include <memory>
 #include <vector>
+
+#include "../Support/Async.hpp"
+#include "Core/ConnectionManager.hpp"
 
 namespace Flux::Test
 {
@@ -23,8 +24,8 @@ namespace Flux::Test
         {
         protected:
             boost::asio::io_context context;
-            boost::asio::strand<boost::asio::io_context::executor_type> strand =
-                boost::asio::make_strand(context);
+            boost::asio::strand<boost::asio::io_context::executor_type>
+                strand = boost::asio::make_strand(context);
             ConnectionManager manager;
             Tcp::socket peer {context};
             ConnectionManager::ConnectionPtr connection;
@@ -53,7 +54,7 @@ namespace Flux::Test
                 ASSERT_TRUE(AwaitFuture(context, connection->AsyncStart()).has_value());
             }
         };
-    }
+    }   // namespace
 
     TEST_F(ConnectionTest, RejectsSendBeforeStartIncludingEmptyPayload)
     {
@@ -81,7 +82,8 @@ namespace Flux::Test
         ASSERT_TRUE(AwaitFuture(context, connection->Send({})).has_value());
         const std::vector expected {std::byte {12}, std::byte {34}};
         std::vector<std::byte> received(expected.size());
-        auto read = boost::asio::async_read(peer, boost::asio::buffer(received),
+        auto read = boost::asio::async_read(peer,
+                                            boost::asio::buffer(received),
                                             boost::asio::use_future);
         EXPECT_TRUE(AwaitFuture(context, connection->Send(std::vector(expected))).has_value());
         EXPECT_EQ(AwaitFuture(context, std::move(read)), expected.size());
@@ -106,7 +108,8 @@ namespace Flux::Test
         messages.clear();
 
         std::vector<std::byte> received(expected.size());
-        auto read = boost::asio::async_read(peer, boost::asio::buffer(received),
+        auto read = boost::asio::async_read(peer,
+                                            boost::asio::buffer(received),
                                             boost::asio::use_future);
         EXPECT_EQ(AwaitFuture(context, std::move(read)), expected.size());
         EXPECT_EQ(received, expected);
@@ -116,7 +119,8 @@ namespace Flux::Test
     {
         Start();
         const std::vector<std::byte> data(128 * 1024, std::byte {42});
-        auto write = boost::asio::async_write(peer, boost::asio::buffer(data),
+        auto write = boost::asio::async_write(peer,
+                                              boost::asio::buffer(data),
                                               boost::asio::use_future);
         ASSERT_EQ(AwaitFuture(context, std::move(write)), data.size());
         peer.shutdown(Tcp::socket::shutdown_send);
@@ -155,10 +159,11 @@ namespace Flux::Test
     {
         Start();
         OnExecutor(context, strand, [&] {
-            EXPECT_TRUE(connection->Send(std::vector<std::byte>(4 * 1024 * 1024,
-                                                               std::byte {1})).get().has_value());
-            EXPECT_TRUE(connection->Send(std::vector<std::byte>(1024, std::byte {2}))
-                            .get().has_value());
+            EXPECT_TRUE(connection->Send(std::vector<std::byte>(4 * 1024 * 1024, std::byte {1}))
+                            .get()
+                            .has_value());
+            EXPECT_TRUE(
+                connection->Send(std::vector<std::byte>(1024, std::byte {2})).get().has_value());
             EXPECT_TRUE(connection->AsyncClose().get().has_value());
         });
         const std::weak_ptr weakConnection = connection;
@@ -204,4 +209,4 @@ namespace Flux::Test
         EXPECT_TRUE(AwaitFuture(context, std::move(close)).has_value());
         EXPECT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
     }
-}
+}   // namespace Flux::Test

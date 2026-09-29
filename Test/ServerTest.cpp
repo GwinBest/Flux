@@ -187,6 +187,7 @@ namespace Flux::Test
                                            FailChild("Unexpected server payload\n");
                                        readCompleted = true;
                                    });
+
             if (!keepClientOpen)
             {
                 client.shutdown(Tcp::socket::shutdown_send);
