@@ -5,6 +5,8 @@
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/use_future.hpp>
+#include <boost/asio/write.hpp>
 #include <boost/system/error_code.hpp>
 #include <chrono>
 #include <cstddef>
@@ -17,6 +19,7 @@
 #include <utility>
 #include <vector>
 
+#include "../Support/Async.hpp"
 #include "../Support/Socket.hpp"
 #include "Core/IoContextPool.hpp"
 
@@ -31,39 +34,14 @@ namespace Flux::Test
         constexpr std::size_t SingleThreadCount = 1U;
         constexpr unsigned short AnyPort = 0U;
 
-        struct CompletionObservation
-        {
-            bool Called = false;
-            bool Inline = false;
-            bool OnStrand = false;
-            Result Outcome;
-        };
-
-        auto ExpectInlineSuccess(const CompletionObservation& observation, const char* operation)
-            -> void
-        {
-            SCOPED_TRACE(operation);
-            EXPECT_TRUE(observation.Inline);
-            EXPECT_TRUE(observation.OnStrand);
-            EXPECT_TRUE(observation.Outcome.has_value());
-        }
-
         auto Start(const std::shared_ptr<Acceptor>& acceptor) -> std::future<Result>
         {
-            auto completion = std::make_shared<std::promise<Result>>();
-            auto future = completion->get_future();
-            acceptor->AsyncStartAccepting(
-                [completion](Result result) -> void { completion->set_value(std::move(result)); });
-            return future;
+            return acceptor->AsyncStartAccepting();
         }
 
         auto Stop(const std::shared_ptr<Acceptor>& acceptor) -> std::future<Result>
         {
-            auto completion = std::make_shared<std::promise<Result>>();
-            auto future = completion->get_future();
-            acceptor->AsyncStopAccepting(
-                [completion](Result result) -> void { completion->set_value(std::move(result)); });
-            return future;
+            return acceptor->AsyncStopAccepting();
         }
 
         auto Await(std::future<Result> future) -> Result
@@ -99,12 +77,27 @@ namespace Flux::Test
             return endpoint;
         }
 
-        auto ExpectClientDisconnected(boost::asio::io_context& context,
-                                      const Tcp::endpoint& endpoint) -> void
+        auto ExpectClientServedUntilEof(boost::asio::io_context& context,
+                                        const Tcp::endpoint& endpoint) -> void
         {
-            boost::asio::io_context clients;
-            Tcp::socket client(clients);
+            Tcp::socket client(context);
             client.connect(endpoint);
+            ASSERT_GT(context.run_one_for(3s), 0U);
+            context.poll();
+            client.non_blocking(true);
+            char probe = 0;
+            ErrorCode probeError;
+            EXPECT_EQ(client.read_some(boost::asio::buffer(&probe, 1), probeError), 0U);
+            ASSERT_TRUE(probeError == boost::asio::error::would_block
+                        || probeError == boost::asio::error::try_again)
+                << probeError.message();
+            client.non_blocking(false);
+            const std::vector<char> payload(32768, 'x');
+            auto written = boost::asio::async_write(client,
+                                                    boost::asio::buffer(payload),
+                                                    boost::asio::use_future);
+            ASSERT_EQ(AwaitFuture(context, std::move(written)), payload.size());
+            client.shutdown(Tcp::socket::shutdown_send);
             bool readCompleted = false;
             ErrorCode readError;
             std::size_t bytesRead = 0;
@@ -115,18 +108,13 @@ namespace Flux::Test
                                        bytesRead = size;
                                        readCompleted = true;
                                    });
-            // EOF proves that OnAccept processed and destroyed the accepted socket.
-            EXPECT_GT(context.run_one_for(3s), 0U);
-            clients.restart();
-            clients.run_for(3s);
-            EXPECT_TRUE(readCompleted);
+            // The managed connection drains client data, observes EOF and closes its socket.
+            ASSERT_TRUE(PumpUntil(context, [&] { return readCompleted; }));
             EXPECT_EQ(bytesRead, 0U);
             EXPECT_EQ(readError, boost::asio::error::eof);
             ErrorCode closeError;
             closeError = client.close(closeError);
             EXPECT_FALSE(closeError) << closeError.message();
-            clients.restart();
-            clients.poll();
         }
     }   // namespace
 
@@ -293,29 +281,22 @@ namespace Flux::Test
         const auto strand = boost::asio::make_strand(context);
         const auto result = Acceptor::CreateAcceptor(strand, MakeLoopbackEndpoint());
         ASSERT_TRUE(result.has_value());
-        CompletionObservation started;
-        CompletionObservation stopped;
+        bool commandsCompleted = false;
         const auto& acceptor = *result;
 
         boost::asio::post(strand, [&] -> void {
-            acceptor->AsyncStartAccepting([&](const Result& startResult) -> void {
-                started.OnStrand = strand.running_in_this_thread();
-                started.Outcome = startResult;
-                started.Called = true;
-            });
-            started.Inline = started.Called;
+            auto started = acceptor->AsyncStartAccepting();
+            ASSERT_EQ(started.wait_for(0s), std::future_status::ready);
+            EXPECT_TRUE(started.get().has_value());
 
-            acceptor->AsyncStopAccepting([&](const Result& stopResult) -> void {
-                stopped.OnStrand = strand.running_in_this_thread();
-                stopped.Outcome = stopResult;
-                stopped.Called = true;
-            });
-            stopped.Inline = stopped.Called;
+            auto stopped = acceptor->AsyncStopAccepting();
+            ASSERT_EQ(stopped.wait_for(0s), std::future_status::ready);
+            EXPECT_TRUE(stopped.get().has_value());
+            commandsCompleted = true;
         });
 
         context.run();
-        ExpectInlineSuccess(started, "start");
-        ExpectInlineSuccess(stopped, "stop");
+        EXPECT_TRUE(commandsCompleted);
     }
 
     TEST(AcceptorAsyncTest, PendingAcceptDoesNotKeepDestroyedAcceptorAlive)
@@ -336,7 +317,77 @@ namespace Flux::Test
         EXPECT_TRUE(context.stopped());
     }
 
-    TEST(AcceptorAsyncTest, AcceptsSeveralClientsAndClosesEachSocket)
+    TEST(AcceptorAsyncTest, StopClosesActiveManagedConnections)
+    {
+        boost::asio::io_context context;
+        const auto endpoint = ReserveLoopbackEndpoint();
+        const auto result = Acceptor::CreateAcceptor(boost::asio::make_strand(context), endpoint);
+        ASSERT_TRUE(result.has_value());
+        ASSERT_TRUE(AwaitFuture(context, Start(*result)).has_value());
+        std::vector<Tcp::socket> clients;
+        for (int index = 0; index < 3; ++index)
+        {
+            clients.emplace_back(context);
+            clients.back().connect(endpoint);
+            ASSERT_GT(context.run_one_for(3s), 0U);
+            context.poll();
+        }
+        ASSERT_TRUE(AwaitFuture(context, Stop(*result)).has_value());
+        for (auto& client : clients)
+        {
+            bool completed = false;
+            ErrorCode readError;
+            char byte = 0;
+            client.async_read_some(boost::asio::buffer(&byte, 1),
+                                   [&](const ErrorCode& error, std::size_t size) {
+                                       readError = error;
+                                       EXPECT_EQ(size, 0U);
+                                       completed = true;
+                                   });
+            ASSERT_TRUE(PumpUntil(context, [&] { return completed; }));
+            EXPECT_TRUE(readError == boost::asio::error::eof
+                        || readError == boost::asio::error::connection_reset)
+                << readError.message();
+        }
+        context.restart();
+        context.poll();
+        EXPECT_TRUE(context.stopped());
+    }
+
+    TEST(AcceptorAsyncTest, DestroyedAcceptorAllowsActiveClientToFinishSafely)
+    {
+        boost::asio::io_context context;
+        const auto endpoint = ReserveLoopbackEndpoint();
+        auto result = Acceptor::CreateAcceptor(boost::asio::make_strand(context), endpoint);
+        ASSERT_TRUE(result.has_value());
+        auto acceptor = std::move(*result);
+        ASSERT_TRUE(AwaitFuture(context, Start(acceptor)).has_value());
+        Tcp::socket client(context);
+        client.connect(endpoint);
+        ASSERT_GT(context.run_one_for(3s), 0U);
+        context.poll();
+        const std::weak_ptr weakAcceptor = acceptor;
+        acceptor.reset();
+        EXPECT_TRUE(weakAcceptor.expired());
+        client.shutdown(Tcp::socket::shutdown_send);
+        bool completed = false;
+        ErrorCode readError;
+        char byte = 0;
+        client.async_read_some(boost::asio::buffer(&byte, 1),
+                               [&](const ErrorCode& error, std::size_t) {
+                                   readError = error;
+                                   completed = true;
+                               });
+        ASSERT_TRUE(PumpUntil(context, [&] { return completed; }));
+        EXPECT_TRUE(readError == boost::asio::error::eof
+                    || readError == boost::asio::error::connection_reset)
+            << readError.message();
+        context.restart();
+        context.poll();
+        EXPECT_TRUE(context.stopped());
+    }
+
+    TEST(AcceptorAsyncTest, ManagesSeveralClientsUntilEachPeerCloses)
     {
         boost::asio::io_context context;
         const auto endpoint = ReserveLoopbackEndpoint();
@@ -349,7 +400,7 @@ namespace Flux::Test
         for (int index = 0; index < 3; ++index)
         {
             SCOPED_TRACE(index);
-            ExpectClientDisconnected(context, endpoint);
+            ExpectClientServedUntilEof(context, endpoint);
         }
 
         auto stopped = Stop(*result);

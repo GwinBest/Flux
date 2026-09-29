@@ -9,22 +9,34 @@
 
 namespace Flux
 {
-    auto Acceptor::AsyncStartAccepting(CompletionHandler onStarted) -> void
+    namespace
     {
-        boost::asio::dispatch(
-            _strand,
-            [self = shared_from_this(), onStarted = std::move(onStarted)] -> void {
-                onStarted(self->StartAccepting());
-            });
+        template<typename Operation>
+        auto DispatchOperation(const boost::asio::any_io_executor& executor, Operation&& operation)
+            -> std::future<Result>
+        {
+            std::packaged_task<Result()> task(std::forward<Operation>(operation));
+            auto future = task.get_future();
+
+            boost::asio::dispatch(executor, [task = std::move(task)] mutable -> void { task(); });
+            return future;
+        }
+    }   // namespace
+
+    auto Acceptor::AsyncStartAccepting() -> std::future<Result>
+    {
+        return DispatchOperation(_strand, [self = shared_from_this()] mutable -> Result {
+            const auto acceptor = std::move(self);
+            return acceptor->StartAccepting();
+        });
     }
 
-    auto Acceptor::AsyncStopAccepting(CompletionHandler onStopped) -> void
+    auto Acceptor::AsyncStopAccepting() -> std::future<Result>
     {
-        boost::asio::dispatch(
-            _strand,
-            [self = shared_from_this(), onStopped = std::move(onStopped)] -> void {
-                onStopped(self->StopAccepting());
-            });
+        return DispatchOperation(_strand, [self = shared_from_this()] mutable -> Result {
+            const auto acceptor = std::move(self);
+            return acceptor->StopAccepting();
+        });
     }
 
     auto Acceptor::CreateAcceptor(const IoContextPool::Strand& strand,
@@ -99,6 +111,11 @@ namespace Flux
         else
         {
             DebugLog("Acceptor stop requested while socket is already closed");
+        }
+
+        if (const auto result = _connectionManager.CloseAllConnections(); !result && !firstError)
+        {
+            firstError = result.error();
         }
 
         if (firstError)
@@ -180,7 +197,7 @@ namespace Flux
 
         const auto weakSelf = weak_from_this();
 
-        _acceptor.async_accept([weakSelf](const boost::system::error_code& errorCode,
+        _acceptor.async_accept([weakSelf](const ErrorCode& errorCode,
                                           boost::asio::ip::tcp::socket acceptedSocket) -> void {
             const auto self = weakSelf.lock();
 
@@ -214,7 +231,13 @@ namespace Flux
                         remoteEndpoint.port());
             }
 
-            // TODO: handle client
+            if (const auto connectionResult = _connectionManager.CreateAndStartConnection(
+                    std::move(acceptedSocket));
+                !connectionResult)
+            {
+                ErrorLog("Failed to start accepted client connection: {}",
+                         connectionResult.error().message());
+            }
         }
         else if (errorCode == boost::asio::error::operation_aborted)
         {
@@ -228,7 +251,7 @@ namespace Flux
             _retryTimer.expires_after(RetryInterval);
 
             _retryTimer.async_wait(
-                [weakSelf = weak_from_this()](const boost::system::error_code& timerError) -> void {
+                [weakSelf = weak_from_this()](const ErrorCode& timerError) -> void {
                     const auto retrySelf = weakSelf.lock();
                     if (!retrySelf || retrySelf->_status != Status::Started)
                         return;

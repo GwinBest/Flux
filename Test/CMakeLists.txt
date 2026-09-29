@@ -30,6 +30,8 @@ endif ()
 add_executable(${PROJECT_NAME}-Tests
         ServerTest.cpp
         Core/AcceptorTest.cpp
+        Core/ConnectionManagerTest.cpp
+        Core/ConnectionTest.cpp
         Core/IoContextPoolTest.cpp
         Utils/ErrorTest.cpp
         Utils/LogTest.cpp

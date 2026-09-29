@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <boost/asio/signal_set.hpp>
 #include <condition_variable>
 #include <cstddef>
@@ -38,7 +37,9 @@ namespace Flux
         {
             NotInitialized,
             Initialized,
+            Starting,
             Running,
+            StopRequested,
             Stopping,
             Stopped,
         };
@@ -54,7 +55,8 @@ namespace Flux
         std::mutex _mutex;
         std::condition_variable _stoppedCondition;
 
-        std::atomic<Status> _status;
+        Status _status;
+        bool _shutdownRequested = false;
     };
 
 }   // namespace Flux

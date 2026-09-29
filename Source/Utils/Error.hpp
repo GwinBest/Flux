@@ -19,6 +19,10 @@ namespace Flux
         AcceptorNotStarted,
         AcceptorAlreadyOpen,
         IoContextPoolRunFromWorkerThread,
+        ConnectionAlreadyStarted,
+        ConnectionNotStarted,
+        ConnectionClosed,
+        ConnectionException,
     };
 
     class ErrorCategory final : public boost::system::error_category
@@ -42,7 +46,11 @@ namespace Flux
             case Error::AcceptorAlreadyOpen:    return "acceptor already open";
             case Error::IoContextPoolRunFromWorkerThread:
                 return "IO context pool cannot be started from one of its worker threads";
-            default: return "unknown error";
+            case Error::ConnectionAlreadyStarted: return "connection is already started";
+            case Error::ConnectionNotStarted:     return "connection is not started";
+            case Error::ConnectionClosed:         return "connection is closed";
+            case Error::ConnectionException:      return "connection operation threw an exception";
+            default:                              return "unknown error";
             }
         }
     };

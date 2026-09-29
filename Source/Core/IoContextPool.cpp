@@ -29,7 +29,7 @@ namespace Flux
 
     auto IoContextPool::Run() -> Result
     {
-        const std::unique_lock lock(_mutex);
+        const std::scoped_lock lock(_mutex);
 
         if (_status != Status::Started)
         {
@@ -89,7 +89,7 @@ namespace Flux
 
     auto IoContextPool::Stop() -> Result
     {
-        const std::unique_lock lock(_mutex);
+        const std::scoped_lock lock(_mutex);
 
         if (_status != Status::Running)
         {
