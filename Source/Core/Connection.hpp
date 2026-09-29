@@ -41,13 +41,13 @@ namespace Flux
             , _onClose(std::move(onClose))
         {}
 
-        auto Start() noexcept -> Result;
-        auto Close() noexcept -> Result;
+        auto Start() -> Result;
+        auto Close() -> Result;
 
-        auto QueueSend(std::vector<std::byte>&& data) noexcept -> Result;
+        auto QueueSend(std::vector<std::byte>&& data) -> Result;
 
-        auto DoRead() noexcept -> Result;
-        auto DoWrite() noexcept -> Result;
+        auto DoRead() -> Result;
+        auto DoWrite() -> Result;
 
     private:
         boost::asio::ip::tcp::socket _socket;

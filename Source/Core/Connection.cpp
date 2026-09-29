@@ -81,7 +81,7 @@ namespace Flux
         return {};
     }
 
-    auto Connection::Start() noexcept -> Result
+    auto Connection::Start() -> Result
     {
         if (_status == Status::Closed)
             return std::unexpected(MakeErrorCode(Error::ConnectionClosed));
@@ -108,7 +108,7 @@ namespace Flux
         return result;
     }
 
-    auto Connection::Close() noexcept -> Result
+    auto Connection::Close() -> Result
     {
         if (_status == Status::Closed)
             return {};
@@ -129,7 +129,7 @@ namespace Flux
         return {};
     }
 
-    auto Connection::DoRead() noexcept -> Result
+    auto Connection::DoRead() -> Result
     {
         if (_status != Status::Started)
             return std::unexpected(MakeErrorCode(Error::ConnectionNotStarted));
@@ -137,7 +137,7 @@ namespace Flux
         _socket.async_read_some(
             boost::asio::buffer(_readBuffer),
             [self = shared_from_this()](const ErrorCode& errorCode,
-                                        std::size_t /*length*/) noexcept -> void {
+                                        std::size_t /*length*/) -> void {
                 if (self->_status != Status::Started)
                     return;
 
@@ -168,7 +168,7 @@ namespace Flux
         return {};
     }
 
-    auto Connection::DoWrite() noexcept -> Result
+    auto Connection::DoWrite() -> Result
     {
         if (_status != Status::Started)
             return std::unexpected(MakeErrorCode(Error::ConnectionNotStarted));
@@ -182,9 +182,8 @@ namespace Flux
             _socket,
             boost::asio::buffer(*data),
             // Data is captured to keep the active buffer alive even if Close() clears the queue.
-            [self = shared_from_this(), data](
-                const ErrorCode& errorCode,
-                [[maybe_unused]] std::size_t length) noexcept -> void {
+            [self = shared_from_this(), data](const ErrorCode& errorCode,
+                                              [[maybe_unused]] std::size_t length) -> void {
                 if (self->_status != Status::Started)
                     return;
 
