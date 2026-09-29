@@ -53,7 +53,7 @@ namespace Flux
             });
     }
 
-    auto Connection::QueueSend(std::vector<std::byte>&& data) noexcept -> Result
+    auto Connection::QueueSend(std::vector<std::byte>&& data) -> Result
     {
         if (_status == Status::Closed)
             return std::unexpected(MakeErrorCode(Error::ConnectionClosed));
