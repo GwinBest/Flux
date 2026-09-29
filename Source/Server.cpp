@@ -37,7 +37,11 @@ namespace Flux
 
             {
                 const std::scoped_lock lock(_mutex);
-                _status = Status::Stopping;
+               
+                if (_status == Status::Starting)
+                    _shutdownRequested = true;
+                else if (_status == Status::Running)
+                    _status = Status::StopRequested;
             }
             _stoppedCondition.notify_all();
 
@@ -47,8 +51,11 @@ namespace Flux
 
     Server::~Server()
     {
-        if (_status == Status::Stopped)
-            return;
+        {
+            const std::scoped_lock lock(_mutex);
+            if (_status == Status::Stopped)
+                return;
+        }
 
         if (const auto result = Stop(); !result)
             ErrorLog("Destructor failed to stop server: {}", result.error().message());
@@ -56,19 +63,24 @@ namespace Flux
 
     auto Server::Run() -> Result
     {
+        std::unique_lock lock(_mutex);
+
         if (_status != Status::Initialized)
         {
             WarnLog("Server run failed: Status is not initialized");
             return std::unexpected(MakeErrorCode(Error::ServerNotInitialized));
         }
 
+        _status = Status::Starting;
+        lock.unlock();
+
         if (const auto poolResult = _ioContextPool.Run(); !poolResult)
         {
-            ErrorLog("Failed to start ioContextPool: {}\nStopping server...",
-                     poolResult.error().message());
-
-            if (const auto result = Stop(); !result)
-                ErrorLog("Failed to stop server: {}", result.error().message());
+            lock.lock();
+            _status = Status::NotInitialized;
+            lock.unlock();
+            _stoppedCondition.notify_all();
+            ErrorLog("Failed to start ioContextPool: {}", poolResult.error().message());
 
             return poolResult;
         }
@@ -77,6 +89,9 @@ namespace Flux
 
         if (const auto startResult = started.get(); !startResult)
         {
+            lock.lock();
+            _status = Status::StopRequested;
+            lock.unlock();
             ErrorLog("Failed to start acceptor: {}\nStopping server...",
                      startResult.error().message());
 
@@ -86,20 +101,29 @@ namespace Flux
             return startResult;
         }
 
-        std::unique_lock lock(_mutex);
+        lock.lock();
+
+        _status = _shutdownRequested ? Status::StopRequested : Status::Running;
+
         _stoppedCondition.wait(lock, [this] -> bool {
-            return _status == Status::Stopping || _status == Status::Stopped;
+            return _status == Status::StopRequested || _status == Status::Stopping
+                || _status == Status::Stopped || _status == Status::NotInitialized;
         });
         return {};
     }
 
     auto Server::Stop() -> Result
     {
-        if (_status != Status::Stopping)
         {
-            WarnLog("Server stop failed: Server status is not Status::Stopping");
-            return std::unexpected(MakeErrorCode(Error::ServerNotStopping));
+            const std::scoped_lock lock(_mutex);
+            if (_status != Status::StopRequested && _status != Status::Running)
+            {
+                WarnLog("Server stop rejected: not running or shutdown already in progress");
+                return std::unexpected(MakeErrorCode(Error::ServerNotStopping));
+            }
+            _status = Status::Stopping;
         }
+        _stoppedCondition.notify_all();
 
         ErrorCode firstError;
 
@@ -118,11 +142,13 @@ namespace Flux
             if (const auto stopResult = stopped.get(); !stopResult)
             {
                 ErrorLog("Failed to stop acceptor");
-                return stopResult;
+                if (!firstError)
+                    firstError = stopResult.error();
             }
         }
 
-        if (const auto ioContextStopResult = _ioContextPool.Stop(); !ioContextStopResult)
+        const auto ioContextStopResult = _ioContextPool.Stop();
+        if (!ioContextStopResult)
         {
             if (!firstError)
                 firstError = ioContextStopResult.error();
@@ -130,15 +156,16 @@ namespace Flux
             ErrorLog("Failed to stop io_context pool: {}", ioContextStopResult.error().message());
         }
 
+        {
+            const std::scoped_lock lock(_mutex);
+            _status = ioContextStopResult ? Status::Stopped : Status::NotInitialized;
+        }
+        _stoppedCondition.notify_all();
+
         if (firstError)
             return std::unexpected(firstError);
 
         InfoLog("Server stopped");
-
-        _status = Status::Stopped;
-
-        _stoppedCondition.notify_all();
-
         return {};
     }
 }   // namespace Flux
