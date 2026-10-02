@@ -165,7 +165,7 @@ namespace Flux::Test
     TEST_F(ConnectionTest, ReadsMoreThanOneBufferAndClosesOnPeerEof)
     {
         Start();
-        constexpr auto payloadSize = static_cast<const std::size_t>(128 * 1024);
+        constexpr auto payloadSize = static_cast<std::size_t>(128 * 1024);
         const std::vector<std::byte> data(payloadSize, std::byte {42});
         auto write = boost::asio::async_write(_peer,
                                               boost::asio::buffer(data),
@@ -213,7 +213,7 @@ namespace Flux::Test
     {
         Start();
         OnExecutor(_context, _strand, [&] -> void {
-            constexpr auto pendingPayloadSize = static_cast<const std::size_t>(4 * 1024 * 1024);
+            constexpr auto pendingPayloadSize = static_cast<std::size_t>(4 * 1024 * 1024);
             EXPECT_TRUE(_connection->Send(std::vector<std::byte>(pendingPayloadSize, std::byte {1}))
                             .get()
                             .has_value());
