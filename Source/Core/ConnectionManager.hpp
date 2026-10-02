@@ -66,7 +66,7 @@ namespace Flux
         };
 
         std::shared_ptr<State> _state = std::make_shared<State>();
-        
+
         const std::size_t _maxConnections;
     };
 }   // namespace Flux
