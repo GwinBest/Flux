@@ -236,7 +236,8 @@ namespace Flux::Test
         const auto secondStopError = Await(Stop(acceptor));
 
         EXPECT_TRUE(firstStopError.has_value()) << ErrorMessage(firstStopError);
-        EXPECT_FALSE(secondStopError.has_value()) << ErrorMessage(secondStopError);
+        ASSERT_FALSE(secondStopError.has_value());
+        EXPECT_EQ(secondStopError.error(), MakeErrorCode(Error::AcceptorNotStarted));
     }
 
     TEST(AcceptorAsyncTest, QueuesCommandsAndKeepsObjectAliveUntilCompletion)

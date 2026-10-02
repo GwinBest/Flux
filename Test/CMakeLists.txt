@@ -35,6 +35,7 @@ add_executable(${PROJECT_NAME}-Tests
         Core/IoContextPoolTest.cpp
         Utils/ErrorTest.cpp
         Utils/LogTest.cpp
+        Utils/SystemResourcesTest.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}-Tests PRIVATE ${PROJECT_NAME} GTest::gtest_main spdlog::spdlog)
