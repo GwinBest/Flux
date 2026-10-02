@@ -40,7 +40,7 @@ namespace Flux::Test
     {
         const auto resources = GetSystemResources();
         ASSERT_TRUE(resources.has_value()) << resources.error().message();
-        const ConnectionLimitOptions options;
+        constexpr ConnectionLimitOptions options;
         const auto capacity = ConnectionManager::CalculateMaxConnections(*resources, options);
         ASSERT_TRUE(capacity.has_value()) << capacity.error().message();
         EXPECT_LE(*capacity, resources->AvailableMemoryBytes / options.MemoryPerConnectionBytes);

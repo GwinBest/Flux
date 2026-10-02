@@ -96,14 +96,14 @@ namespace Flux::Test
             }
         }
 
-        auto WaitForRejectedRuns(std::vector<std::future<Result>>& results) -> void
+        auto WaitForRejectedRuns(const std::vector<std::future<Result>>& results) -> void
         {
             using namespace std::chrono_literals;
             const auto deadline = std::chrono::steady_clock::now() + 3s;
             for (;;)
             {
                 std::size_t ready = 0;
-                for (auto& result : results)
+                for (const auto& result : results)
                     ready += result.wait_for(0s) == std::future_status::ready ? 1U : 0U;
                 if (ready == results.size())
                     FailChild("Concurrent Run stopped the winning invocation\n");

@@ -159,7 +159,9 @@ namespace Flux::Test
         for (const auto factor : {std::nextafter(1.0, 2.0), std::nextafter(0.0, -1.0)})
         {
             options.SafetyFactor = factor;
-            const auto result = ConnectionManager::CalculateMaxConnections({10, 10}, options);
+            const auto result = ConnectionManager::CalculateMaxConnections(
+                {.FileDescriptorLimit = 10, .AvailableMemoryBytes = 10},
+                options);
             ASSERT_FALSE(result.has_value());
             EXPECT_EQ(result.error(), std::make_error_code(std::errc::invalid_argument));
         }
@@ -307,7 +309,7 @@ namespace Flux::Test
         ASSERT_FALSE(rejected.has_value());
         EXPECT_EQ(rejected.error(), MakeErrorCode(Error::ConnectionLimitReached));
         ASSERT_NO_FATAL_FAILURE(ExpectPeerClosed(context, peer));
-        const auto send = AwaitFuture(context, (*existing)->Send({}));
+        const auto send = AwaitFuture(context, existing.value()->Send({}));
         ASSERT_FALSE(send.has_value());
         EXPECT_EQ(send.error(), MakeErrorCode(Error::ConnectionNotStarted));
         const auto stillFull = manager.CreateConnection(Tcp::socket(context));
@@ -666,8 +668,10 @@ namespace Flux::Test
         struct NonStandardFailure
         {};
 
-        for (const auto& exception : {std::make_exception_ptr(std::bad_alloc {}),
-                                      std::make_exception_ptr(NonStandardFailure {})})
+        for (const auto& exception : {
+                 std::make_exception_ptr(std::bad_alloc {}),
+                 std::make_exception_ptr(NonStandardFailure {}),
+             })
         {
             boost::asio::io_context context;
             const ConnectionManager manager(2);
