@@ -109,7 +109,7 @@ namespace Flux::Test
                                        readCompleted = true;
                                    });
             // The managed connection drains client data, observes EOF and closes its socket.
-            ASSERT_TRUE(PumpUntil(context, [&] { return readCompleted; }));
+            ASSERT_TRUE(PumpUntil(context, [&] -> bool { return readCompleted; }));
             EXPECT_EQ(bytesRead, 0U);
             EXPECT_EQ(readError, boost::asio::error::eof);
             ErrorCode closeError;
@@ -340,12 +340,12 @@ namespace Flux::Test
             ErrorCode readError;
             char byte = 0;
             client.async_read_some(boost::asio::buffer(&byte, 1),
-                                   [&](const ErrorCode& error, std::size_t size) {
+                                   [&](const ErrorCode& error, std::size_t size) -> void {
                                        readError = error;
                                        EXPECT_EQ(size, 0U);
                                        completed = true;
                                    });
-            ASSERT_TRUE(PumpUntil(context, [&] { return completed; }));
+            ASSERT_TRUE(PumpUntil(context, [&] -> bool { return completed; }));
             EXPECT_TRUE(readError == boost::asio::error::eof
                         || readError == boost::asio::error::connection_reset)
                 << readError.message();
@@ -375,11 +375,11 @@ namespace Flux::Test
         ErrorCode readError;
         char byte = 0;
         client.async_read_some(boost::asio::buffer(&byte, 1),
-                               [&](const ErrorCode& error, std::size_t) {
+                               [&](const ErrorCode& error, std::size_t) -> void {
                                    readError = error;
                                    completed = true;
                                });
-        ASSERT_TRUE(PumpUntil(context, [&] { return completed; }));
+        ASSERT_TRUE(PumpUntil(context, [&] -> bool { return completed; }));
         EXPECT_TRUE(readError == boost::asio::error::eof
                     || readError == boost::asio::error::connection_reset)
             << readError.message();

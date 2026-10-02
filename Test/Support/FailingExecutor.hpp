@@ -34,9 +34,9 @@ namespace Flux::Test
         template<typename Property>
         requires boost::asio::can_query<const boost::asio::any_io_executor&, Property>::value
         // NOLINTNEXTLINE(readability-identifier-naming)
-        auto query(const Property& property) const noexcept(
-            boost::asio::is_nothrow_query<const boost::asio::any_io_executor&, Property>::value) ->
-            typename boost::asio::query_result<const boost::asio::any_io_executor&, Property>::type
+        [[nodiscard]] auto query(const Property& property) const noexcept(
+            boost::asio::is_nothrow_query<const boost::asio::any_io_executor&, Property>::value)
+            -> boost::asio::query_result<const boost::asio::any_io_executor&, Property>::type
         {
             return boost::asio::query(_executor, property);
         }
@@ -44,7 +44,7 @@ namespace Flux::Test
         template<typename Property>
         requires boost::asio::can_require<const boost::asio::any_io_executor&, Property>::value
         // NOLINTNEXTLINE(readability-identifier-naming)
-        auto require(const Property& property) const -> FailingExecutor
+        [[nodiscard]] auto require(const Property& property) const -> FailingExecutor
         {
             return {boost::asio::require(_executor, property), _failure};
         }
@@ -52,7 +52,7 @@ namespace Flux::Test
         template<typename Property>
         requires boost::asio::can_prefer<const boost::asio::any_io_executor&, Property>::value
         // NOLINTNEXTLINE(readability-identifier-naming)
-        auto prefer(const Property& property) const -> FailingExecutor
+        [[nodiscard]] auto prefer(const Property& property) const -> FailingExecutor
         {
             return {boost::asio::prefer(_executor, property), _failure};
         }

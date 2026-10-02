@@ -1,9 +1,9 @@
 #include "Core/Connection.hpp"
 #include "gtest/gtest.h"
 
+#include <boost/asio/strand.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/read.hpp>
-#include <boost/asio/strand.hpp>
 #include <boost/asio/use_future.hpp>
 #include <boost/asio/write.hpp>
 #include <chrono>
@@ -23,38 +23,38 @@ namespace Flux::Test
         class ConnectionTest : public testing::Test
         {
         protected:
-            boost::asio::io_context context;
+            boost::asio::io_context _context;
             boost::asio::strand<boost::asio::io_context::executor_type>
-                strand = boost::asio::make_strand(context);
-            ConnectionManager manager {1};
-            Tcp::socket peer {context};
-            ConnectionManager::ConnectionPtr connection;
+                _strand = boost::asio::make_strand(_context);
+            ConnectionManager _manager {1};
+            Tcp::socket _peer {_context};
+            ConnectionManager::ConnectionPtr _connection;
 
             auto SetUp() -> void override
             {
-                Tcp::acceptor listener(context, {boost::asio::ip::address_v4::loopback(), 0});
-                peer.connect(listener.local_endpoint());
-                Tcp::socket socket(strand);
+                Tcp::acceptor listener(_context, {boost::asio::ip::address_v4::loopback(), 0});
+                _peer.connect(listener.local_endpoint());
+                Tcp::socket socket(_strand);
                 listener.accept(socket);
-                auto result = manager.CreateConnection(std::move(socket));
+                auto result = _manager.CreateConnection(std::move(socket));
                 ASSERT_TRUE(result.has_value());
-                connection = std::move(*result);
-                ASSERT_NE(connection, nullptr);
+                _connection = std::move(*result);
+                ASSERT_NE(_connection, nullptr);
             }
 
             auto TearDown() -> void override
             {
-                if (connection)
+                if (_connection)
                 {
-                    EXPECT_TRUE(AwaitFuture(context, connection->AsyncClose()).has_value());
+                    EXPECT_TRUE(AwaitFuture(_context, _connection->AsyncClose()).has_value());
                 }
-                context.restart();
-                context.poll();
+                _context.restart();
+                _context.poll();
             }
 
             auto Start() -> void
             {
-                ASSERT_TRUE(AwaitFuture(context, connection->AsyncStart()).has_value());
+                ASSERT_TRUE(AwaitFuture(_context, _connection->AsyncStart()).has_value());
             }
         };
     }   // namespace
@@ -63,7 +63,7 @@ namespace Flux::Test
     {
         for (auto data : {std::vector<std::byte> {}, std::vector {std::byte {1}}})
         {
-            const auto result = AwaitFuture(context, connection->Send(std::move(data)));
+            const auto result = AwaitFuture(_context, _connection->Send(std::move(data)));
             ASSERT_FALSE(result.has_value());
             EXPECT_EQ(result.error(), MakeErrorCode(Error::ConnectionNotStarted));
         }
@@ -71,24 +71,24 @@ namespace Flux::Test
 
     TEST_F(ConnectionTest, StartIsQueuedAndRepeatedStartIsRejected)
     {
-        auto started = connection->AsyncStart();
+        auto started = _connection->AsyncStart();
         EXPECT_EQ(started.wait_for(0s), std::future_status::timeout);
-        ASSERT_TRUE(AwaitFuture(context, std::move(started)).has_value());
-        const auto repeated = AwaitFuture(context, connection->AsyncStart());
+        ASSERT_TRUE(AwaitFuture(_context, std::move(started)).has_value());
+        const auto repeated = AwaitFuture(_context, _connection->AsyncStart());
         ASSERT_FALSE(repeated.has_value());
         EXPECT_EQ(repeated.error(), MakeErrorCode(Error::ConnectionAlreadyStarted));
     }
 
     TEST_F(ConnectionTest, CommandsCompleteInlineOnTheConnectionStrand)
     {
-        OnExecutor(context, strand, [&] {
-            auto started = connection->AsyncStart();
+        OnExecutor(_context, _strand, [&] -> void {
+            auto started = _connection->AsyncStart();
             ASSERT_EQ(started.wait_for(0s), std::future_status::ready);
             EXPECT_TRUE(started.get().has_value());
-            auto sent = connection->Send({});
+            auto sent = _connection->Send({});
             ASSERT_EQ(sent.wait_for(0s), std::future_status::ready);
             EXPECT_TRUE(sent.get().has_value());
-            auto closed = connection->AsyncClose();
+            auto closed = _connection->AsyncClose();
             ASSERT_EQ(closed.wait_for(0s), std::future_status::ready);
             EXPECT_TRUE(closed.get().has_value());
         });
@@ -96,24 +96,24 @@ namespace Flux::Test
 
     TEST_F(ConnectionTest, QueuedCommandsObserveLifecycleOrder)
     {
-        auto beforeStart = connection->Send({});
-        auto started = connection->AsyncStart();
-        auto afterStart = connection->Send({});
-        auto closed = connection->AsyncClose();
-        auto afterClose = connection->Send({std::byte {1}});
+        auto beforeStart = _connection->Send({});
+        auto started = _connection->AsyncStart();
+        auto afterStart = _connection->Send({});
+        auto closed = _connection->AsyncClose();
+        auto afterClose = _connection->Send({std::byte {1}});
         EXPECT_EQ(beforeStart.wait_for(0s), std::future_status::timeout);
         EXPECT_EQ(started.wait_for(0s), std::future_status::timeout);
         EXPECT_EQ(afterStart.wait_for(0s), std::future_status::timeout);
         EXPECT_EQ(closed.wait_for(0s), std::future_status::timeout);
         EXPECT_EQ(afterClose.wait_for(0s), std::future_status::timeout);
 
-        const auto earlySend = AwaitFuture(context, std::move(beforeStart));
+        const auto earlySend = AwaitFuture(_context, std::move(beforeStart));
         ASSERT_FALSE(earlySend.has_value());
         EXPECT_EQ(earlySend.error(), MakeErrorCode(Error::ConnectionNotStarted));
-        EXPECT_TRUE(AwaitFuture(context, std::move(started)).has_value());
-        EXPECT_TRUE(AwaitFuture(context, std::move(afterStart)).has_value());
-        EXPECT_TRUE(AwaitFuture(context, std::move(closed)).has_value());
-        const auto lateSend = AwaitFuture(context, std::move(afterClose));
+        EXPECT_TRUE(AwaitFuture(_context, std::move(started)).has_value());
+        EXPECT_TRUE(AwaitFuture(_context, std::move(afterStart)).has_value());
+        EXPECT_TRUE(AwaitFuture(_context, std::move(closed)).has_value());
+        const auto lateSend = AwaitFuture(_context, std::move(afterClose));
         ASSERT_FALSE(lateSend.has_value());
         EXPECT_EQ(lateSend.error(), MakeErrorCode(Error::ConnectionClosed));
     }
@@ -121,14 +121,14 @@ namespace Flux::Test
     TEST_F(ConnectionTest, EmptySendSucceedsAndDoesNotPreventNextWrite)
     {
         Start();
-        ASSERT_TRUE(AwaitFuture(context, connection->Send({})).has_value());
+        ASSERT_TRUE(AwaitFuture(_context, _connection->Send({})).has_value());
         const std::vector expected {std::byte {12}, std::byte {34}};
         std::vector<std::byte> received(expected.size());
-        auto read = boost::asio::async_read(peer,
+        auto read = boost::asio::async_read(_peer,
                                             boost::asio::buffer(received),
                                             boost::asio::use_future);
-        EXPECT_TRUE(AwaitFuture(context, connection->Send(std::vector(expected))).has_value());
-        EXPECT_EQ(AwaitFuture(context, std::move(read)), expected.size());
+        EXPECT_TRUE(AwaitFuture(_context, _connection->Send(std::vector(expected))).has_value());
+        EXPECT_EQ(AwaitFuture(_context, std::move(read)), expected.size());
         EXPECT_EQ(received, expected);
     }
 
@@ -137,64 +137,69 @@ namespace Flux::Test
         Start();
         std::vector<std::byte> expected;
         std::vector<std::vector<std::byte>> messages;
-        for (unsigned char index = 1; index <= 8; ++index)
+        constexpr unsigned char messageCount = 8;
+        constexpr std::size_t messageSize = 32768;
+        messages.reserve(messageCount);
+        expected.reserve(messageCount * messageSize);
+        for (unsigned char index = 1; index <= messageCount; ++index)
         {
-            messages.emplace_back(32768, static_cast<std::byte>(index));
+            messages.emplace_back(messageSize, static_cast<std::byte>(index));
             expected.insert(expected.end(), messages.back().begin(), messages.back().end());
         }
         // All sends run inside one strand handler, before any write completion can run.
-        OnExecutor(context, strand, [&] {
+        OnExecutor(_context, _strand, [&] -> void {
             for (auto& message : messages)
-                EXPECT_TRUE(connection->Send(std::move(message)).get().has_value());
+                EXPECT_TRUE(_connection->Send(std::move(message)).get().has_value());
         });
         messages.clear();
 
         std::vector<std::byte> received(expected.size());
-        auto read = boost::asio::async_read(peer,
+        auto read = boost::asio::async_read(_peer,
                                             boost::asio::buffer(received),
                                             boost::asio::use_future);
-        EXPECT_EQ(AwaitFuture(context, std::move(read)), expected.size());
+        EXPECT_EQ(AwaitFuture(_context, std::move(read)), expected.size());
         EXPECT_EQ(received, expected);
     }
 
     TEST_F(ConnectionTest, ReadsMoreThanOneBufferAndClosesOnPeerEof)
     {
         Start();
-        const std::vector<std::byte> data(128 * 1024, std::byte {42});
-        auto write = boost::asio::async_write(peer,
+        constexpr std::size_t payloadSize = 128 * 1024;
+        const std::vector<std::byte> data(payloadSize, std::byte {42});
+        auto write = boost::asio::async_write(_peer,
                                               boost::asio::buffer(data),
                                               boost::asio::use_future);
-        ASSERT_EQ(AwaitFuture(context, std::move(write)), data.size());
-        peer.shutdown(Tcp::socket::shutdown_send);
-        const std::weak_ptr weakConnection = connection;
-        connection.reset();
+        ASSERT_EQ(AwaitFuture(_context, std::move(write)), data.size());
+        _peer.shutdown(Tcp::socket::shutdown_send);
+        const std::weak_ptr weakConnection = _connection;
+        _connection.reset();
         // Expiration requires reading through the stream to EOF and removal by the manager.
-        ASSERT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
-        const auto replacement = manager.CreateConnection(Tcp::socket(strand));
+        ASSERT_TRUE(PumpUntil(_context, [&] -> bool { return weakConnection.expired(); }));
+        const auto replacement = _manager.CreateConnection(Tcp::socket(_strand));
         ASSERT_TRUE(replacement.has_value());
-        EXPECT_TRUE(AwaitFuture(context, (*replacement)->AsyncClose()).has_value());
+        EXPECT_TRUE(AwaitFuture(_context, (*replacement)->AsyncClose()).has_value());
     }
 
     TEST_F(ConnectionTest, PeerResetClosesAndReleasesConnection)
     {
         Start();
-        peer.set_option(boost::asio::socket_base::linger(true, 0));
-        peer.close();
-        const std::weak_ptr weakConnection = connection;
-        connection.reset();
-        ASSERT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
-        const auto replacement = manager.CreateConnection(Tcp::socket(strand));
+        _peer.set_option(boost::asio::socket_base::linger(true, 0));
+        _peer.close();
+        const std::weak_ptr weakConnection = _connection;
+        _connection.reset();
+        ASSERT_TRUE(PumpUntil(_context, [&] -> bool { return weakConnection.expired(); }));
+        const auto replacement = _manager.CreateConnection(Tcp::socket(_strand));
         ASSERT_TRUE(replacement.has_value());
-        EXPECT_TRUE(AwaitFuture(context, (*replacement)->AsyncClose()).has_value());
+        EXPECT_TRUE(AwaitFuture(_context, (*replacement)->AsyncClose()).has_value());
     }
 
     TEST_F(ConnectionTest, CloseBeforeStartIsIdempotentAndRejectsFurtherOperations)
     {
-        EXPECT_TRUE(AwaitFuture(context, connection->AsyncClose()).has_value());
-        EXPECT_TRUE(AwaitFuture(context, connection->AsyncClose()).has_value());
-        const auto start = AwaitFuture(context, connection->AsyncStart());
-        const auto send = AwaitFuture(context, connection->Send({std::byte {1}}));
-        const auto emptySend = AwaitFuture(context, connection->Send({}));
+        EXPECT_TRUE(AwaitFuture(_context, _connection->AsyncClose()).has_value());
+        EXPECT_TRUE(AwaitFuture(_context, _connection->AsyncClose()).has_value());
+        const auto start = AwaitFuture(_context, _connection->AsyncStart());
+        const auto send = AwaitFuture(_context, _connection->Send({std::byte {1}}));
+        const auto emptySend = AwaitFuture(_context, _connection->Send({}));
         ASSERT_FALSE(start.has_value());
         ASSERT_FALSE(send.has_value());
         ASSERT_FALSE(emptySend.has_value());
@@ -206,17 +211,18 @@ namespace Flux::Test
     TEST_F(ConnectionTest, CloseCancelsPendingReadAndQueuedWritesAndReleasesBuffers)
     {
         Start();
-        OnExecutor(context, strand, [&] {
-            EXPECT_TRUE(connection->Send(std::vector<std::byte>(4 * 1024 * 1024, std::byte {1}))
+        OnExecutor(_context, _strand, [&] -> void {
+            constexpr std::size_t pendingPayloadSize = 4 * 1024 * 1024;
+            EXPECT_TRUE(_connection->Send(std::vector<std::byte>(pendingPayloadSize, std::byte {1}))
                             .get()
                             .has_value());
             EXPECT_TRUE(
-                connection->Send(std::vector<std::byte>(1024, std::byte {2})).get().has_value());
-            EXPECT_TRUE(connection->AsyncClose().get().has_value());
+                _connection->Send(std::vector<std::byte>(1024, std::byte {2})).get().has_value());
+            EXPECT_TRUE(_connection->AsyncClose().get().has_value());
         });
-        const std::weak_ptr weakConnection = connection;
-        connection.reset();
-        EXPECT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+        const std::weak_ptr weakConnection = _connection;
+        _connection.reset();
+        EXPECT_TRUE(PumpUntil(_context, [&] -> bool { return weakConnection.expired(); }));
     }
 
     TEST(ConnectionAsyncTest, WriteFailureClosesAndUnregistersConnection)
@@ -237,7 +243,7 @@ namespace Flux::Test
         ASSERT_TRUE(AwaitFuture(context, connection.value()->Send({std::byte {1}})).has_value());
         const std::weak_ptr weakConnection = connection.value();
         connection.value().reset();
-        ASSERT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+        ASSERT_TRUE(PumpUntil(context, [&] -> bool { return weakConnection.expired(); }));
         const auto replacement = manager.CreateConnection(Tcp::socket(strand));
         ASSERT_TRUE(replacement.has_value());
         EXPECT_TRUE(AwaitFuture(context, (*replacement)->AsyncClose()).has_value());
@@ -260,7 +266,7 @@ namespace Flux::Test
         ASSERT_FALSE(startResult.has_value());
         EXPECT_EQ(startResult.error(), ErrorCode(boost::asio::error::bad_descriptor));
         EXPECT_TRUE(AwaitFuture(context, std::move(close)).has_value());
-        EXPECT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+        EXPECT_TRUE(PumpUntil(context, [&] -> bool { return weakConnection.expired(); }));
     }
 
     TEST(ConnectionAsyncTest, FailedStartRemainsUnstartedUntilExplicitClose)
@@ -293,9 +299,12 @@ namespace Flux::Test
         ConnectionManager::ConnectionPtr connection;
         {
             const ConnectionManager manager(1);
-            const auto result = OnExecutor(context, context.get_executor(), [&] {
-                return manager.CreateAndStartConnection(listener.accept());
-            });
+            const auto result = OnExecutor(
+                context,
+                context.get_executor(),
+                [&] -> std::expected<ConnectionManager::ConnectionPtr, ErrorCode> {
+                    return manager.CreateAndStartConnection(listener.accept());
+                });
             ASSERT_TRUE(result.has_value());
             connection = *result;
         }
@@ -310,6 +319,6 @@ namespace Flux::Test
         EXPECT_TRUE(AwaitFuture(context, connection->AsyncClose()).has_value());
         const std::weak_ptr weakConnection = connection;
         connection.reset();
-        EXPECT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+        EXPECT_TRUE(PumpUntil(context, [&] -> bool { return weakConnection.expired(); }));
     }
 }   // namespace Flux::Test

@@ -85,7 +85,9 @@ namespace Flux::Test
     {
         ConnectionLimitOptions options;
         options.MemoryPerConnectionBytes = 0;
-        const auto zeroMemory = ConnectionManager::CalculateMaxConnections({1000, 1000}, options);
+        const auto zeroMemory = ConnectionManager::CalculateMaxConnections(
+            {.FileDescriptorLimit = 1000, .AvailableMemoryBytes = 1000},
+            options);
         ASSERT_FALSE(zeroMemory.has_value());
         EXPECT_EQ(zeroMemory.error(), std::make_error_code(std::errc::invalid_argument));
 
@@ -101,7 +103,9 @@ namespace Flux::Test
         {
             SCOPED_TRACE(factor);
             options.SafetyFactor = factor;
-            const auto result = ConnectionManager::CalculateMaxConnections({1000, 1000}, options);
+            const auto result = ConnectionManager::CalculateMaxConnections(
+                {.FileDescriptorLimit = 1000, .AvailableMemoryBytes = 1000},
+                options);
             ASSERT_FALSE(result.has_value());
             EXPECT_EQ(result.error(), std::make_error_code(std::errc::invalid_argument));
         }
@@ -294,9 +298,12 @@ namespace Flux::Test
         Tcp::socket peer(context);
         peer.connect(listener.local_endpoint());
         auto socket = listener.accept();
-        const auto rejected = OnExecutor(context, context.get_executor(), [&] {
-            return manager.CreateAndStartConnection(std::move(socket));
-        });
+        const auto rejected = OnExecutor(
+            context,
+            context.get_executor(),
+            [&] -> std::expected<ConnectionManager::ConnectionPtr, ErrorCode> {
+                return manager.CreateAndStartConnection(std::move(socket));
+            });
         ASSERT_FALSE(rejected.has_value());
         EXPECT_EQ(rejected.error(), MakeErrorCode(Error::ConnectionLimitReached));
         ASSERT_NO_FATAL_FAILURE(ExpectPeerClosed(context, peer));
@@ -316,7 +323,7 @@ namespace Flux::Test
         const ConnectionManager manager(1);
         const auto first = manager.CreateConnection(Tcp::socket(context));
         ASSERT_TRUE(first.has_value());
-        ASSERT_TRUE(OnExecutor(context, context.get_executor(), [&] {
+        ASSERT_TRUE(OnExecutor(context, context.get_executor(), [&] -> Result {
                         return manager.CloseConnection(*first);
                     }).has_value());
         const auto replacement = manager.CreateConnection(Tcp::socket(context));
@@ -349,7 +356,7 @@ namespace Flux::Test
             const auto rejected = manager.CreateConnection(Tcp::socket(context));
             ASSERT_FALSE(rejected.has_value());
             EXPECT_EQ(rejected.error(), MakeErrorCode(Error::ConnectionLimitReached));
-            ASSERT_TRUE(OnExecutor(context, context.get_executor(), [&] {
+            ASSERT_TRUE(OnExecutor(context, context.get_executor(), [&] -> Result {
                             return manager.CloseAllConnections();
                         }).has_value());
             EXPECT_TRUE(manager.CloseAllConnections().has_value());
@@ -418,7 +425,7 @@ namespace Flux::Test
         const auto stillFull = manager.CreateConnection(boost::asio::ip::tcp::socket(context));
         ASSERT_FALSE(stillFull.has_value());
         EXPECT_EQ(stillFull.error(), MakeErrorCode(Error::ConnectionLimitReached));
-        EXPECT_TRUE(OnExecutor(context, context.get_executor(), [&] {
+        EXPECT_TRUE(OnExecutor(context, context.get_executor(), [&] -> Result {
                         return manager.CloseAllConnections();
                     }).has_value());
         const auto result = AwaitFuture(context, foreign.value()->Send({}));
@@ -491,18 +498,22 @@ namespace Flux::Test
     {
         IoContextPool pool(2);
         ASSERT_TRUE(pool.Run().has_value());
-        const ConnectionManager manager(80);
+        constexpr std::size_t workerCount = 4;
+        constexpr std::size_t connectionsPerWorker = 20;
+        constexpr auto connectionCount = workerCount * connectionsPerWorker;
+        const ConnectionManager manager(connectionCount);
         std::vector<std::jthread> callers;
-        std::vector<std::weak_ptr<Connection>> connections(80);
-        for (std::size_t worker = 0; worker < 4; ++worker)
+        callers.reserve(workerCount);
+        std::vector<std::weak_ptr<Connection>> connections(connectionCount);
+        for (std::size_t worker = 0; worker < workerCount; ++worker)
         {
             callers.emplace_back([&, worker] -> void {
-                for (std::size_t index = 0; index < 20; ++index)
+                for (std::size_t index = 0; index < connectionsPerWorker; ++index)
                 {
                     auto connection = manager.CreateConnection(
                         boost::asio::ip::tcp::socket(pool.GetStrand()));
                     ASSERT_TRUE(connection.has_value());
-                    connections[worker * 20 + index] = connection.value();
+                    connections.at((worker * connectionsPerWorker) + index) = connection.value();
                     EXPECT_TRUE(manager.CloseConnection(connection.value()).has_value());
                     connection.value().reset();
                 }
@@ -521,10 +532,13 @@ namespace Flux::Test
         Tcp::acceptor listener(clients, {boost::asio::ip::address_v4::loopback(), 0});
         IoContextPool pool(2);
         ASSERT_TRUE(pool.Run().has_value());
-        const ConnectionManager manager(5);
+        constexpr std::size_t connectionCount = 5;
+        const ConnectionManager manager(connectionCount);
         std::vector<Tcp::socket> peers;
         std::vector<std::weak_ptr<Connection>> connections;
-        for (int index = 0; index < 5; ++index)
+        peers.reserve(connectionCount);
+        connections.reserve(connectionCount);
+        for (std::size_t index = 0; index < connectionCount; ++index)
         {
             peers.emplace_back(clients);
             peers.back().connect(listener.local_endpoint());
@@ -543,12 +557,12 @@ namespace Flux::Test
             ErrorCode error;
             bool completed = false;
             peer.async_read_some(boost::asio::buffer(&byte, 1),
-                                 [&](const ErrorCode& readError, std::size_t size) {
+                                 [&](const ErrorCode& readError, std::size_t size) -> void {
                                      error = readError;
                                      EXPECT_EQ(size, 0U);
                                      completed = true;
                                  });
-            ASSERT_TRUE(PumpUntil(clients, [&] { return completed; }));
+            ASSERT_TRUE(PumpUntil(clients, [&] -> bool { return completed; }));
             EXPECT_TRUE(error == boost::asio::error::eof
                         || error == boost::asio::error::connection_reset)
                 << error.message();
@@ -585,8 +599,12 @@ namespace Flux::Test
         Tcp::socket socket(FailingExecutor(context.get_executor(), failure));
         listener.accept(socket);
 
-        EXPECT_THROW(static_cast<void>(manager.CreateAndStartConnection(std::move(socket))),
-                     std::bad_alloc);
+        EXPECT_THROW(
+            {
+                [[maybe_unused]] const auto result = manager.CreateAndStartConnection(
+                    std::move(socket));
+            },
+            std::bad_alloc);
         EXPECT_FALSE(*failure);
         ASSERT_NO_FATAL_FAILURE(ExpectPeerClosed(context, peer));
         const auto replacement = manager.CreateConnection(Tcp::socket(context));
@@ -603,7 +621,9 @@ namespace Flux::Test
             boost::asio::ip::tcp::socket(FailingExecutor(context.get_executor(), failure)));
         ASSERT_TRUE(connection.has_value());
         const std::weak_ptr weakConnection = *connection;
-        EXPECT_THROW(static_cast<void>(manager.CloseConnection(*connection)), std::bad_alloc);
+        EXPECT_THROW(
+            { [[maybe_unused]] const auto result = manager.CloseConnection(*connection); },
+            std::bad_alloc);
         EXPECT_FALSE(*failure);
         connection->reset();
         EXPECT_FALSE(weakConnection.expired());
@@ -629,7 +649,7 @@ namespace Flux::Test
         const std::weak_ptr weakHealthy = *healthy;
         healthy->reset();
 
-        const auto closed = OnExecutor(context, context.get_executor(), [&] {
+        const auto closed = OnExecutor(context, context.get_executor(), [&] -> Result {
             return manager.CloseAllConnections();
         });
         ASSERT_FALSE(closed.has_value());
@@ -666,7 +686,7 @@ namespace Flux::Test
             EXPECT_EQ(closed.error(), MakeErrorCode(Error::ConnectionException));
             for (const auto& failure : failures) EXPECT_FALSE(*failure);
             for (const auto& connection : connections) EXPECT_FALSE(connection.expired());
-            const auto retried = OnExecutor(context, context.get_executor(), [&] {
+            const auto retried = OnExecutor(context, context.get_executor(), [&] -> Result {
                 return manager.CloseAllConnections();
             });
             EXPECT_TRUE(retried.has_value());
@@ -687,10 +707,10 @@ namespace Flux::Test
         auto socket = acceptor.accept();
         const ConnectionManager manager(1);
 
-        boost::asio::post(context, [&] {
+        boost::asio::post(context, [&] -> void {
             auto result = manager.CreateAndStartConnection(std::move(socket));
             ASSERT_TRUE(result.has_value());
-            const auto connection = *result;
+            const auto& connection = *result;
 
             EXPECT_TRUE(manager.CloseConnection(connection).has_value());
             const auto restartResult = connection->AsyncStart().get();
