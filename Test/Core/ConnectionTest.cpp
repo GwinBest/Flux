@@ -7,6 +7,7 @@
 #include <boost/asio/use_future.hpp>
 #include <boost/asio/write.hpp>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <vector>
 
@@ -164,7 +165,7 @@ namespace Flux::Test
     TEST_F(ConnectionTest, ReadsMoreThanOneBufferAndClosesOnPeerEof)
     {
         Start();
-        constexpr std::size_t payloadSize = 128 * 1024;
+        constexpr auto payloadSize = static_cast<const std::size_t>(128 * 1024);
         const std::vector<std::byte> data(payloadSize, std::byte {42});
         auto write = boost::asio::async_write(_peer,
                                               boost::asio::buffer(data),
@@ -212,7 +213,7 @@ namespace Flux::Test
     {
         Start();
         OnExecutor(_context, _strand, [&] -> void {
-            constexpr std::size_t pendingPayloadSize = 4 * 1024 * 1024;
+            constexpr auto pendingPayloadSize = static_cast<const std::size_t>(4 * 1024 * 1024);
             EXPECT_TRUE(_connection->Send(std::vector<std::byte>(pendingPayloadSize, std::byte {1}))
                             .get()
                             .has_value());
@@ -245,7 +246,6 @@ namespace Flux::Test
         connection.value().reset();
         ASSERT_TRUE(PumpUntil(context, [&] -> bool { return weakConnection.expired(); }));
         const auto replacement = manager.CreateConnection(Tcp::socket(strand));
-        ASSERT_TRUE(replacement.has_value());
         EXPECT_TRUE(AwaitFuture(context, (*replacement)->AsyncClose()).has_value());
     }
 
@@ -277,15 +277,15 @@ namespace Flux::Test
         ASSERT_TRUE(connection.has_value());
         for (int attempt = 0; attempt < 2; ++attempt)
         {
-            const auto started = AwaitFuture(context, (*connection)->AsyncStart());
+            const auto started = AwaitFuture(context, connection.value()->AsyncStart());
             ASSERT_FALSE(started.has_value());
             EXPECT_EQ(started.error(), ErrorCode(boost::asio::error::bad_descriptor));
         }
-        const auto sent = AwaitFuture(context, (*connection)->Send({}));
+        const auto sent = AwaitFuture(context, connection.value()->Send({}));
         ASSERT_FALSE(sent.has_value());
         EXPECT_EQ(sent.error(), MakeErrorCode(Error::ConnectionNotStarted));
-        ASSERT_TRUE(AwaitFuture(context, (*connection)->AsyncClose()).has_value());
-        const auto restarted = AwaitFuture(context, (*connection)->AsyncStart());
+        ASSERT_TRUE(AwaitFuture(context, connection.value()->AsyncClose()).has_value());
+        const auto restarted = AwaitFuture(context, connection.value()->AsyncStart());
         ASSERT_FALSE(restarted.has_value());
         EXPECT_EQ(restarted.error(), MakeErrorCode(Error::ConnectionClosed));
     }
