@@ -69,7 +69,8 @@ namespace Flux
         const std::scoped_lock lock(_state->Mutex);
         if (_state->Connections.size() >= _maxConnections)
         {
-            ErrorCode errorCode = socket.close(errorCode);
+            ErrorCode errorCode;
+            errorCode = socket.close(errorCode);
             return std::unexpected(MakeErrorCode(Error::ConnectionLimitReached));
 
             // TODO: return http 503
