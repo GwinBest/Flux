@@ -1,9 +1,9 @@
 #include "Core/Connection.hpp"
 #include "gtest/gtest.h"
 
-#include <boost/asio/strand.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/read.hpp>
+#include <boost/asio/strand.hpp>
 #include <boost/asio/use_future.hpp>
 #include <boost/asio/write.hpp>
 #include <chrono>
