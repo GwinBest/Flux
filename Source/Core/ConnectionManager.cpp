@@ -1,28 +1,90 @@
 #include "ConnectionManager.hpp"
 
+#include <algorithm>
 #include <boost/system/system_error.hpp>
+#include <cmath>
 #include <exception>
+#include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include "Core/Connection.hpp"
 #include "Utils/Log.hpp"
+#include "Utils/SystemResources.hpp"
 
 namespace Flux
 {
-    auto ConnectionManager::CreateConnection(boost::asio::ip::tcp::socket&& socket) const
-        -> ConnectionPtr
+    namespace
     {
+        auto DetectMaxConnections(const ConnectionLimitOptions& options)
+            -> std::expected<std::size_t, std::error_code>
+        {
+            const auto result = GetSystemResources();
+
+            if (!result.has_value())
+                return std::unexpected(result.error());
+
+            return ConnectionManager::CalculateMaxConnections(result.value(), options);
+        }
+    }   // namespace
+
+    ConnectionManager::ConnectionManager(const ConnectionLimitOptions& options)
+        : ConnectionManager(DetectMaxConnections(options).value())
+    {}
+
+    ConnectionManager::ConnectionManager(const std::size_t maxConnections)
+        : _maxConnections(maxConnections)
+    {}
+
+    auto ConnectionManager::CalculateMaxConnections(const SystemResources& resources,
+                                                    const ConnectionLimitOptions& options)
+        -> std::expected<std::size_t, std::error_code>
+    {
+        if (options.MemoryPerConnectionBytes == 0 || !std::isfinite(options.SafetyFactor)
+            || options.SafetyFactor <= 0.0 || options.SafetyFactor > 1.0)
+        {
+            return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+        }
+
+        const auto osLimit = resources.FileDescriptorLimit > options.ReservedFileDescriptors
+                               ? resources.FileDescriptorLimit - options.ReservedFileDescriptors
+                               : 0;
+        const auto memoryLimit = resources.AvailableMemoryBytes / options.MemoryPerConnectionBytes;
+        const auto scaledLimit = static_cast<long double>(std::min(osLimit, memoryLimit))
+                               * static_cast<long double>(options.SafetyFactor);
+
+        // Guard before conversion: on MSVC even long double may round SIZE_MAX upward.
+        if (constexpr auto maxSize = std::numeric_limits<std::size_t>::max();
+            scaledLimit >= static_cast<long double>(maxSize))
+        {
+            return maxSize;
+        }
+
+        return static_cast<std::size_t>(scaledLimit);
+    }
+
+    auto ConnectionManager::CreateConnection(boost::asio::ip::tcp::socket&& socket) const
+        -> std::expected<ConnectionPtr, ErrorCode>
+    {
+        const std::scoped_lock lock(_state->Mutex);
+        if (_state->Connections.size() >= _maxConnections)
+        {
+            ErrorCode errorCode = socket.close(errorCode);
+            return std::unexpected(MakeErrorCode(Error::ConnectionLimitReached));
+
+            // TODO: return http 503
+        }
+
         auto connection = ConnectionPtr(new Connection(
             std::move(socket),
             [weakState = std::weak_ptr(_state)](const ConnectionPtr& connectionToClose) -> void {
                 if (const auto state = weakState.lock())
                 {
-                    const std::scoped_lock lock(state->Mutex);
+                    const std::scoped_lock closeLock(state->Mutex);
                     state->Connections.erase(connectionToClose);
                 }
             }));
 
-        const std::scoped_lock lock(_state->Mutex);
         _state->Connections.insert(connection);
 
         return connection;
@@ -31,18 +93,32 @@ namespace Flux
     auto ConnectionManager::CreateAndStartConnection(boost::asio::ip::tcp::socket&& socket) const
         -> std::expected<ConnectionPtr, ErrorCode>
     {
-        auto connection = CreateConnection(std::move(socket));
+        auto createResult = CreateConnection(std::move(socket));
 
-        auto result = connection->AsyncStart();
+        if (!createResult.has_value())
+            return std::unexpected(createResult.error());
 
-        if (const auto startResult = result.get(); !startResult)
+        ConnectionPtr connection = createResult.value();
+
+        try
         {
-            ErrorLog("Failed to start managed connection: {}", startResult.error().message());
+            auto result = connection->AsyncStart();
 
+            if (const auto startResult = result.get(); !startResult)
+            {
+                ErrorLog("Failed to start managed connection: {}", startResult.error().message());
+
+                const std::scoped_lock lock(_state->Mutex);
+                _state->Connections.erase(connection);
+
+                return std::unexpected(startResult.error());
+            }
+        }
+        catch (...)
+        {
             const std::scoped_lock lock(_state->Mutex);
             _state->Connections.erase(connection);
-
-            return std::unexpected(startResult.error());
+            throw;
         }
 
         return connection;

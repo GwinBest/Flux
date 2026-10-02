@@ -26,7 +26,7 @@ namespace Flux::Test
             boost::asio::io_context context;
             boost::asio::strand<boost::asio::io_context::executor_type>
                 strand = boost::asio::make_strand(context);
-            ConnectionManager manager;
+            ConnectionManager manager {1};
             Tcp::socket peer {context};
             ConnectionManager::ConnectionPtr connection;
 
@@ -36,7 +36,10 @@ namespace Flux::Test
                 peer.connect(listener.local_endpoint());
                 Tcp::socket socket(strand);
                 listener.accept(socket);
-                connection = manager.CreateConnection(std::move(socket));
+                auto result = manager.CreateConnection(std::move(socket));
+                ASSERT_TRUE(result.has_value());
+                connection = std::move(*result);
+                ASSERT_NE(connection, nullptr);
             }
 
             auto TearDown() -> void override
@@ -74,6 +77,45 @@ namespace Flux::Test
         const auto repeated = AwaitFuture(context, connection->AsyncStart());
         ASSERT_FALSE(repeated.has_value());
         EXPECT_EQ(repeated.error(), MakeErrorCode(Error::ConnectionAlreadyStarted));
+    }
+
+    TEST_F(ConnectionTest, CommandsCompleteInlineOnTheConnectionStrand)
+    {
+        OnExecutor(context, strand, [&] {
+            auto started = connection->AsyncStart();
+            ASSERT_EQ(started.wait_for(0s), std::future_status::ready);
+            EXPECT_TRUE(started.get().has_value());
+            auto sent = connection->Send({});
+            ASSERT_EQ(sent.wait_for(0s), std::future_status::ready);
+            EXPECT_TRUE(sent.get().has_value());
+            auto closed = connection->AsyncClose();
+            ASSERT_EQ(closed.wait_for(0s), std::future_status::ready);
+            EXPECT_TRUE(closed.get().has_value());
+        });
+    }
+
+    TEST_F(ConnectionTest, QueuedCommandsObserveLifecycleOrder)
+    {
+        auto beforeStart = connection->Send({});
+        auto started = connection->AsyncStart();
+        auto afterStart = connection->Send({});
+        auto closed = connection->AsyncClose();
+        auto afterClose = connection->Send({std::byte {1}});
+        EXPECT_EQ(beforeStart.wait_for(0s), std::future_status::timeout);
+        EXPECT_EQ(started.wait_for(0s), std::future_status::timeout);
+        EXPECT_EQ(afterStart.wait_for(0s), std::future_status::timeout);
+        EXPECT_EQ(closed.wait_for(0s), std::future_status::timeout);
+        EXPECT_EQ(afterClose.wait_for(0s), std::future_status::timeout);
+
+        const auto earlySend = AwaitFuture(context, std::move(beforeStart));
+        ASSERT_FALSE(earlySend.has_value());
+        EXPECT_EQ(earlySend.error(), MakeErrorCode(Error::ConnectionNotStarted));
+        EXPECT_TRUE(AwaitFuture(context, std::move(started)).has_value());
+        EXPECT_TRUE(AwaitFuture(context, std::move(afterStart)).has_value());
+        EXPECT_TRUE(AwaitFuture(context, std::move(closed)).has_value());
+        const auto lateSend = AwaitFuture(context, std::move(afterClose));
+        ASSERT_FALSE(lateSend.has_value());
+        EXPECT_EQ(lateSend.error(), MakeErrorCode(Error::ConnectionClosed));
     }
 
     TEST_F(ConnectionTest, EmptySendSucceedsAndDoesNotPreventNextWrite)
@@ -127,7 +169,10 @@ namespace Flux::Test
         const std::weak_ptr weakConnection = connection;
         connection.reset();
         // Expiration requires reading through the stream to EOF and removal by the manager.
-        EXPECT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+        ASSERT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+        const auto replacement = manager.CreateConnection(Tcp::socket(strand));
+        ASSERT_TRUE(replacement.has_value());
+        EXPECT_TRUE(AwaitFuture(context, (*replacement)->AsyncClose()).has_value());
     }
 
     TEST_F(ConnectionTest, PeerResetClosesAndReleasesConnection)
@@ -137,7 +182,10 @@ namespace Flux::Test
         peer.close();
         const std::weak_ptr weakConnection = connection;
         connection.reset();
-        EXPECT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+        ASSERT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+        const auto replacement = manager.CreateConnection(Tcp::socket(strand));
+        ASSERT_TRUE(replacement.has_value());
+        EXPECT_TRUE(AwaitFuture(context, (*replacement)->AsyncClose()).has_value());
     }
 
     TEST_F(ConnectionTest, CloseBeforeStartIsIdempotentAndRejectsFurtherOperations)
@@ -182,31 +230,86 @@ namespace Flux::Test
         listener.accept(socket);
         // A real TCP half-close makes writing fail while reading remains possible.
         socket.shutdown(Tcp::socket::shutdown_send);
-        ConnectionManager manager;
+        const ConnectionManager manager(1);
         auto connection = manager.CreateConnection(std::move(socket));
-        ASSERT_TRUE(AwaitFuture(context, connection->AsyncStart()).has_value());
-        ASSERT_TRUE(AwaitFuture(context, connection->Send({std::byte {1}})).has_value());
-        const std::weak_ptr weakConnection = connection;
-        connection.reset();
-        EXPECT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+        ASSERT_TRUE(connection.has_value());
+        ASSERT_TRUE(AwaitFuture(context, connection.value()->AsyncStart()).has_value());
+        ASSERT_TRUE(AwaitFuture(context, connection.value()->Send({std::byte {1}})).has_value());
+        const std::weak_ptr weakConnection = connection.value();
+        connection.value().reset();
+        ASSERT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+        const auto replacement = manager.CreateConnection(Tcp::socket(strand));
+        ASSERT_TRUE(replacement.has_value());
+        EXPECT_TRUE(AwaitFuture(context, (*replacement)->AsyncClose()).has_value());
     }
 
     TEST(ConnectionAsyncTest, QueuedOperationsKeepConnectionAliveAfterManagerDestruction)
     {
         boost::asio::io_context context;
         const auto strand = boost::asio::make_strand(context);
-        auto manager = std::make_unique<ConnectionManager>();
+        auto manager = std::make_unique<ConnectionManager>(1);
         auto connection = manager->CreateConnection(Tcp::socket(strand));
-        const std::weak_ptr weakConnection = connection;
-        auto start = connection->AsyncStart();
-        auto close = connection->AsyncClose();
+        ASSERT_TRUE(connection.has_value());
+        const std::weak_ptr weakConnection = connection.value();
+        auto start = connection.value()->AsyncStart();
+        auto close = connection.value()->AsyncClose();
         manager.reset();
-        connection.reset();
+        connection.value().reset();
         EXPECT_FALSE(weakConnection.expired());
         const auto startResult = AwaitFuture(context, std::move(start));
         ASSERT_FALSE(startResult.has_value());
         EXPECT_EQ(startResult.error(), ErrorCode(boost::asio::error::bad_descriptor));
         EXPECT_TRUE(AwaitFuture(context, std::move(close)).has_value());
+        EXPECT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
+    }
+
+    TEST(ConnectionAsyncTest, FailedStartRemainsUnstartedUntilExplicitClose)
+    {
+        boost::asio::io_context context;
+        const ConnectionManager manager(1);
+        const auto connection = manager.CreateConnection(Tcp::socket(context));
+        ASSERT_TRUE(connection.has_value());
+        for (int attempt = 0; attempt < 2; ++attempt)
+        {
+            const auto started = AwaitFuture(context, (*connection)->AsyncStart());
+            ASSERT_FALSE(started.has_value());
+            EXPECT_EQ(started.error(), ErrorCode(boost::asio::error::bad_descriptor));
+        }
+        const auto sent = AwaitFuture(context, (*connection)->Send({}));
+        ASSERT_FALSE(sent.has_value());
+        EXPECT_EQ(sent.error(), MakeErrorCode(Error::ConnectionNotStarted));
+        ASSERT_TRUE(AwaitFuture(context, (*connection)->AsyncClose()).has_value());
+        const auto restarted = AwaitFuture(context, (*connection)->AsyncStart());
+        ASSERT_FALSE(restarted.has_value());
+        EXPECT_EQ(restarted.error(), MakeErrorCode(Error::ConnectionClosed));
+    }
+
+    TEST(ConnectionAsyncTest, ActiveConnectionRemainsUsableAfterManagerDestruction)
+    {
+        boost::asio::io_context context;
+        Tcp::acceptor listener(context, {boost::asio::ip::address_v4::loopback(), 0});
+        Tcp::socket peer(context);
+        peer.connect(listener.local_endpoint());
+        ConnectionManager::ConnectionPtr connection;
+        {
+            const ConnectionManager manager(1);
+            const auto result = OnExecutor(context, context.get_executor(), [&] {
+                return manager.CreateAndStartConnection(listener.accept());
+            });
+            ASSERT_TRUE(result.has_value());
+            connection = *result;
+        }
+        const std::vector payload {std::byte {1}, std::byte {2}, std::byte {3}};
+        std::vector<std::byte> received(payload.size());
+        auto read = boost::asio::async_read(peer,
+                                            boost::asio::buffer(received),
+                                            boost::asio::use_future);
+        EXPECT_TRUE(AwaitFuture(context, connection->Send(std::vector(payload))).has_value());
+        EXPECT_EQ(AwaitFuture(context, std::move(read)), payload.size());
+        EXPECT_EQ(received, payload);
+        EXPECT_TRUE(AwaitFuture(context, connection->AsyncClose()).has_value());
+        const std::weak_ptr weakConnection = connection;
+        connection.reset();
         EXPECT_TRUE(PumpUntil(context, [&] { return weakConnection.expired(); }));
     }
 }   // namespace Flux::Test
