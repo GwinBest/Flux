@@ -55,7 +55,7 @@ namespace Flux
         std::mutex _mutex;
         std::condition_variable _stoppedCondition;
 
-        Status _status;
+        Status _status = Status::NotInitialized;
         bool _shutdownRequested = false;
     };
 

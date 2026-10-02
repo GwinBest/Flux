@@ -5,24 +5,11 @@
 #include <boost/system/system_error.hpp>
 #include <utility>
 
+#include "Utils/Async.hpp"
 #include "Utils/Log.hpp"
 
 namespace Flux
 {
-    namespace
-    {
-        template<typename Operation>
-        auto DispatchOperation(const boost::asio::any_io_executor& executor, Operation&& operation)
-            -> std::future<Result>
-        {
-            std::packaged_task<Result()> task(std::forward<Operation>(operation));
-            auto future = task.get_future();
-
-            boost::asio::dispatch(executor, [task = std::move(task)] mutable -> void { task(); });
-            return future;
-        }
-    }   // namespace
-
     auto Acceptor::AsyncStartAccepting() -> std::future<Result>
     {
         return DispatchOperation(_strand, [self = shared_from_this()] mutable -> Result {

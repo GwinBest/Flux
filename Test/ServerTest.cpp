@@ -52,8 +52,9 @@ namespace Flux::Test
         [[noreturn]] auto RunChildWithDeadline(Operation operation) -> void
         {
             std::promise<void> completed;
-            std::jthread watchdog([completion = completed.get_future()] {
-                if (completion.wait_for(std::chrono::seconds(10)) != std::future_status::ready)
+            std::jthread watchdog([completion = completed.get_future()] -> auto {
+                constexpr auto childTimeout = std::chrono::seconds(10);
+                if (completion.wait_for(childTimeout) != std::future_status::ready)
                     FailChild("Server lifecycle exceeded the child deadline\n");
             });
             try
@@ -95,6 +96,25 @@ namespace Flux::Test
             }
         }
 
+        auto WaitForRejectedRuns(const std::vector<std::future<Result>>& results) -> void
+        {
+            using namespace std::chrono_literals;
+            const auto deadline = std::chrono::steady_clock::now() + 3s;
+            for (;;)
+            {
+                std::size_t ready = 0;
+                for (const auto& result : results)
+                    ready += result.wait_for(0s) == std::future_status::ready ? 1U : 0U;
+                if (ready == results.size())
+                    FailChild("Concurrent Run stopped the winning invocation\n");
+                if (ready == results.size() - 1)
+                    return;
+                if (std::chrono::steady_clock::now() >= deadline)
+                    FailChild("Concurrent Run calls did not reject promptly\n");
+                std::this_thread::yield();
+            }
+        }
+
         auto ConcurrentLifecycle(const bool raceRun) -> void
         {
             using namespace std::chrono_literals;
@@ -108,9 +128,10 @@ namespace Flux::Test
 
             std::barrier start(static_cast<std::ptrdiff_t>(callers + 1));
             std::vector<std::future<Result>> results;
+            results.reserve(callers);
             for (std::size_t index = 0; index < callers; ++index)
             {
-                results.push_back(std::async(std::launch::async, [&] {
+                results.push_back(std::async(std::launch::async, [&] -> Result {
                     start.arrive_and_wait();
                     return raceRun ? server.Run() : server.Stop();
                 }));
@@ -119,20 +140,7 @@ namespace Flux::Test
 
             if (raceRun)
             {
-                const auto deadline = std::chrono::steady_clock::now() + 3s;
-                for (;;)
-                {
-                    std::size_t ready = 0;
-                    for (auto& result : results)
-                        ready += result.wait_for(0s) == std::future_status::ready ? 1U : 0U;
-                    if (ready == callers)
-                        FailChild("Concurrent Run stopped the winning invocation\n");
-                    if (ready == callers - 1)
-                        break;
-                    if (std::chrono::steady_clock::now() >= deadline)
-                        FailChild("Concurrent Run calls did not reject promptly\n");
-                    std::this_thread::yield();
-                }
+                WaitForRejectedRuns(results);
                 if (std::raise(SIGTERM) != 0)
                     FailChild("Failed to signal concurrent Run winner\n");
             }
@@ -154,6 +162,23 @@ namespace Flux::Test
                 FailChild("Concurrent lifecycle calls must have exactly one winner\n");
             if (raceRun && !server.Stop())
                 FailChild("Failed to stop concurrent Run winner\n");
+        }
+
+        auto StopAfterStartup(Server& server, const bool signalShutdown) -> Result
+        {
+            using namespace std::chrono_literals;
+            // Serving a client can precede Run() publishing Status::Running.
+            // Only retry the startup rejection; every other error is a failure.
+            const auto deadline = std::chrono::steady_clock::now() + 3s;
+            for (;;)
+            {
+                auto result = server.Stop();
+                if (result || signalShutdown
+                    || result.error() != MakeErrorCode(Error::ServerNotStopping)
+                    || std::chrono::steady_clock::now() >= deadline)
+                    return result;
+                std::this_thread::yield();
+            }
         }
 
         auto RunningServerLifecycle(const bool keepClientOpen, const bool signalShutdown = true)
@@ -181,7 +206,7 @@ namespace Flux::Test
             ErrorCode readError;
             bool readCompleted = false;
             client.async_read_some(boost::asio::buffer(&byte, 1),
-                                   [&](const ErrorCode& error, std::size_t size) {
+                                   [&](const ErrorCode& error, std::size_t size) -> void {
                                        readError = error;
                                        if (size != 0)
                                            FailChild("Unexpected server payload\n");
@@ -191,7 +216,7 @@ namespace Flux::Test
             if (!keepClientOpen)
             {
                 client.shutdown(Tcp::socket::shutdown_send);
-                if (!PumpUntil(clientContext, [&] { return readCompleted; })
+                if (!PumpUntil(clientContext, [&] -> bool { return readCompleted; })
                     || readError != boost::asio::error::eof)
                     FailChild("Server did not close after client EOF\n");
             }
@@ -205,19 +230,8 @@ namespace Flux::Test
                 if (run.wait_for(3s) != std::future_status::ready)
                     FailChild("Server run did not return after the signal\n");
             }
-            auto stopped = std::async(std::launch::async, [&] {
-                // Serving a client can precede Run() publishing Status::Running.
-                // Only retry the startup rejection; every other error is a failure.
-                const auto deadline = std::chrono::steady_clock::now() + 3s;
-                for (;;)
-                {
-                    auto result = server.Stop();
-                    if (result || signalShutdown
-                        || result.error() != MakeErrorCode(Error::ServerNotStopping)
-                        || std::chrono::steady_clock::now() >= deadline)
-                        return result;
-                    std::this_thread::yield();
-                }
+            auto stopped = std::async(std::launch::async, [&] -> Result {
+                return StopAfterStartup(server, signalShutdown);
             });
             if (stopped.wait_for(3s) != std::future_status::ready || !stopped.get())
                 FailChild("Server stop did not complete successfully\n");
@@ -231,7 +245,7 @@ namespace Flux::Test
                 runAgain || runAgain.error() != MakeErrorCode(Error::ServerNotInitialized))
                 FailChild("Restart returned an unexpected result\n");
             if (keepClientOpen
-                && (!PumpUntil(clientContext, [&] { return readCompleted; })
+                && (!PumpUntil(clientContext, [&] -> bool { return readCompleted; })
                     || (readError != boost::asio::error::eof
                         && readError != boost::asio::error::connection_reset)))
                 FailChild("Server shutdown did not close active client\n");
@@ -286,70 +300,70 @@ namespace Flux::Test
 
     TEST(ServerSignalDeathTest, InterruptAllowsExplicitStopAndRejectsRestart)
     {
-        ASSERT_EXIT(RunChildWithDeadline([] { SignalLifecycle(SIGINT, true); }),
+        ASSERT_EXIT(RunChildWithDeadline([] -> void { SignalLifecycle(SIGINT, true); }),
                     testing::ExitedWithCode(0),
                     "");
     }
 
     TEST(ServerSignalDeathTest, TerminationAllowsExplicitStopAndRejectsRestart)
     {
-        ASSERT_EXIT(RunChildWithDeadline([] { SignalLifecycle(SIGTERM, true); }),
+        ASSERT_EXIT(RunChildWithDeadline([] -> void { SignalLifecycle(SIGTERM, true); }),
                     testing::ExitedWithCode(0),
                     "");
     }
 
     TEST(ServerSignalDeathTest, DestructorStopsAfterShutdownRequest)
     {
-        ASSERT_EXIT(RunChildWithDeadline([] { SignalLifecycle(SIGTERM, false); }),
+        ASSERT_EXIT(RunChildWithDeadline([] -> void { SignalLifecycle(SIGTERM, false); }),
                     testing::ExitedWithCode(0),
                     "");
     }
 
     TEST(ServerSignalDeathTest, SignalBeforeRunDoesNotDeadlockSingleWorker)
     {
-        ASSERT_EXIT(RunChildWithDeadline([] { SignalLifecycle(SIGTERM, true, 1); }),
+        ASSERT_EXIT(RunChildWithDeadline([] -> void { SignalLifecycle(SIGTERM, true, 1); }),
                     testing::ExitedWithCode(0),
                     "");
     }
 
     TEST(ServerSignalDeathTest, ServesClientAndWaitsForSignalDuringRun)
     {
-        ASSERT_EXIT(RunChildWithDeadline([] { RunningServerLifecycle(false); }),
+        ASSERT_EXIT(RunChildWithDeadline([] -> void { RunningServerLifecycle(false); }),
                     testing::ExitedWithCode(0),
                     "");
     }
 
     TEST(ServerSignalDeathTest, ShutdownClosesActiveClientBeforeJoiningWorkers)
     {
-        ASSERT_EXIT(RunChildWithDeadline([] { RunningServerLifecycle(true); }),
+        ASSERT_EXIT(RunChildWithDeadline([] -> void { RunningServerLifecycle(true); }),
                     testing::ExitedWithCode(0),
                     "");
     }
 
     TEST(ServerSignalDeathTest, StopsRunningServerWithoutSignalAndRejectsRestart)
     {
-        ASSERT_EXIT(RunChildWithDeadline([] { RunningServerLifecycle(false, false); }),
+        ASSERT_EXIT(RunChildWithDeadline([] -> void { RunningServerLifecycle(false, false); }),
                     testing::ExitedWithCode(0),
                     "");
     }
 
     TEST(ServerSignalDeathTest, StopWithoutSignalClosesActiveClient)
     {
-        ASSERT_EXIT(RunChildWithDeadline([] { RunningServerLifecycle(true, false); }),
+        ASSERT_EXIT(RunChildWithDeadline([] -> void { RunningServerLifecycle(true, false); }),
                     testing::ExitedWithCode(0),
                     "");
     }
 
     TEST(ServerSignalDeathTest, ConcurrentRunHasExactlyOneWinner)
     {
-        ASSERT_EXIT(RunChildWithDeadline([] { ConcurrentLifecycle(true); }),
+        ASSERT_EXIT(RunChildWithDeadline([] -> void { ConcurrentLifecycle(true); }),
                     testing::ExitedWithCode(0),
                     "");
     }
 
     TEST(ServerSignalDeathTest, ConcurrentStopHasExactlyOneWinner)
     {
-        ASSERT_EXIT(RunChildWithDeadline([] { ConcurrentLifecycle(false); }),
+        ASSERT_EXIT(RunChildWithDeadline([] -> void { ConcurrentLifecycle(false); }),
                     testing::ExitedWithCode(0),
                     "");
     }

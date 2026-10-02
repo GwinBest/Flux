@@ -7,24 +7,11 @@
 #include <new>
 #include <system_error>
 
+#include "Utils/Async.hpp"
 #include "Utils/Log.hpp"
 
 namespace Flux
 {
-    namespace
-    {
-        template<typename Operation>
-        auto DispatchOperation(const boost::asio::any_io_executor& executor, Operation&& operation)
-            -> std::future<Result>
-        {
-            std::packaged_task<Result()> task(std::forward<Operation>(operation));
-            auto future = task.get_future();
-
-            boost::asio::dispatch(executor, [task = std::move(task)] mutable -> void { task(); });
-            return future;
-        }
-    }   // namespace
-
     auto Connection::AsyncStart() -> std::future<Result>
     {
         return DispatchOperation(_socket.get_executor(),
@@ -168,6 +155,7 @@ namespace Flux
         return {};
     }
 
+    // NOLINTNEXTLINE(misc-no-recursion)
     auto Connection::DoWrite() -> Result
     {
         if (_status != Status::Started)
@@ -181,7 +169,7 @@ namespace Flux
         boost::asio::async_write(
             _socket,
             boost::asio::buffer(*data),
-            // Data is captured to keep the active buffer alive even if Close() clears the queue.
+            // NOLINTNEXTLINE(misc-no-recursion)
             [self = shared_from_this(), data](const ErrorCode& errorCode,
                                               [[maybe_unused]] std::size_t length) -> void {
                 if (self->_status != Status::Started)

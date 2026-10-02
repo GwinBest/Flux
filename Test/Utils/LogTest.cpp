@@ -146,4 +146,19 @@ namespace Flux::Test
         EXPECT_THROW(InfoLog("{", 1), spdlog::fmt_lib::format_error);
         EXPECT_TRUE(_sink->Entries.empty());
     }
+
+    TEST_F(LogTest, RespectsConfiguredSeverityThreshold)
+    {
+        spdlog::default_logger()->set_level(spdlog::level::warn);
+        DebugLog("hidden {}", 1);
+        InfoLog("hidden info");
+        WarnLog("visible {}", 2);
+        ErrorLog("visible error");
+
+        ASSERT_EQ(_sink->Entries.size(), 2U);
+        EXPECT_EQ(_sink->Entries.at(0).Level, spdlog::level::warn);
+        EXPECT_EQ(_sink->Entries.at(0).Text, "visible 2");
+        EXPECT_EQ(_sink->Entries.at(1).Level, spdlog::level::err);
+        EXPECT_EQ(_sink->Entries.at(1).Text, "visible error");
+    }
 }   // namespace Flux::Test

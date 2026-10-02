@@ -1,6 +1,8 @@
 #include "IoContextPool.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <exception>
 
 #include "Utils/Log.hpp"
 
@@ -21,10 +23,21 @@ namespace Flux
         if (_status == Status::Stopped)
             return;
 
-        _ioContext.stop();   // Hard stop
+        try
+        {
+            _ioContext.stop();   // Hard stop
 
-        if (const auto stopResult = Stop(); !stopResult.has_value())
-            ErrorLog("Destructor failed to stop io_context pool: {}", stopResult.error().message());
+            if (const auto stopResult = Stop(); !stopResult.has_value())
+                ErrorLog("Destructor failed to stop io_context pool: {}",
+                         stopResult.error().message());
+        }
+        catch (...)
+        {
+            // Workers may still use this object if stopping or joining fails.
+            // Terminate explicitly rather than destroy resources beneath them.
+            std::fputs("Failed to shut down io_context pool during destruction\n", stderr);
+            std::terminate();
+        }
     }
 
     auto IoContextPool::Run() -> Result

@@ -13,7 +13,7 @@ namespace Flux::Test
 {
     // Drive real handlers with a deadline; no sleeps or access to private state.
     template<typename Predicate>
-    auto PumpUntil(boost::asio::io_context& context, Predicate&& predicate) -> bool
+    auto PumpUntil(boost::asio::io_context& context, const Predicate& predicate) -> bool
     {
         using namespace std::chrono_literals;
         const auto work = boost::asio::make_work_guard(context);
@@ -32,7 +32,7 @@ namespace Flux::Test
     template<typename Value>
     auto AwaitFuture(boost::asio::io_context& context, std::future<Value> future) -> Value
     {
-        if (!PumpUntil(context, [&future] {
+        if (!PumpUntil(context, [&future] -> bool {
                 return future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
             }))
             throw std::runtime_error("Asynchronous operation exceeded the test deadline");
@@ -47,7 +47,7 @@ namespace Flux::Test
         using Value = std::invoke_result_t<Operation>;
         std::packaged_task<Value()> task(std::forward<Operation>(operation));
         auto future = task.get_future();
-        boost::asio::post(executor, [task = std::move(task)] mutable { task(); });
+        boost::asio::post(executor, [task = std::move(task)] mutable -> void { task(); });
         return AwaitFuture(context, std::move(future));
     }
 }   // namespace Flux::Test
