@@ -74,7 +74,7 @@ namespace Flux::Test
         EXPECT_EQ(Connection::IdleTimeoutDuration, 120s);
         EXPECT_EQ((*defaultConnection)->GetIdleTimeout(), 120s);
         EXPECT_EQ((*customConnection)->GetIdleTimeout(), 7s);
-        (*customConnection)->SetIdleTimeout(9s);
+        customConnection.value()->SetIdleTimeout(9s);
         EXPECT_EQ((*customConnection)->GetIdleTimeout(), 9s);
         EXPECT_EQ((*defaultConnection)->GetIdleTimeout(), 120s);
     }
@@ -123,7 +123,7 @@ namespace Flux::Test
         EXPECT_EQ(full.error(), MakeErrorCode(Error::ConnectionLimitReached));
         boost::asio::steady_timer wait(context, 1200ms);
         AwaitFuture(context, wait.async_wait(boost::asio::use_future));
-        const auto expired = AwaitFuture(context, (*first)->Send({}));
+        const auto expired = AwaitFuture(context, first.value()->Send({}));
         ASSERT_FALSE(expired.has_value());
         EXPECT_EQ(expired.error(), MakeErrorCode(Error::ConnectionClosed));
         ASSERT_NO_FATAL_FAILURE(ExpectPeerClosed(context, firstPeer));
