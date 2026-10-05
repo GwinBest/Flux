@@ -40,6 +40,15 @@ namespace Flux
             if (options.IdleSeconds <= 0 || options.IntervalSeconds <= 0 || options.ProbeCount <= 0)
                 return boost::asio::error::invalid_argument;
 
+#ifdef _WIN32
+            static constexpr ULONG MillisecondsPerSecond = 1000;
+            static constexpr auto MaximumSeconds = std::numeric_limits<ULONG>::max()
+                                                 / MillisecondsPerSecond;
+            if (std::cmp_greater(options.IdleSeconds, MaximumSeconds)
+                || std::cmp_greater(options.IntervalSeconds, MaximumSeconds))
+                return boost::asio::error::invalid_argument;
+#endif
+
             ErrorCode keepAliveError;
             keepAliveError = socket.set_option(boost::asio::socket_base::keep_alive(true),
                                                keepAliveError);
@@ -50,7 +59,6 @@ namespace Flux
             const auto nativeFd = socket.native_handle();
 
 #ifdef _WIN32
-            static constexpr ULONG MillisecondsPerSecond = 1000;
             ::tcp_keepalive alive {};
             alive.onoff = 1;
             alive.keepalivetime = static_cast<ULONG>(options.IdleSeconds) * MillisecondsPerSecond;
