@@ -32,6 +32,7 @@ add_executable(${PROJECT_NAME}-Tests
         Core/AcceptorTest.cpp
         Core/ConnectionManagerTest.cpp
         Core/ConnectionTest.cpp
+        Core/ConnectionIdleTimeoutTest.cpp
         Core/IoContextPoolTest.cpp
         Utils/ErrorTest.cpp
         Utils/LogTest.cpp
@@ -57,6 +58,31 @@ if (WIN32)
 endif ()
 
 gtest_discover_tests(${PROJECT_NAME}-Tests
+        DISCOVERY_MODE PRE_TEST
+        DISCOVERY_TIMEOUT 10
+        PROPERTIES TIMEOUT 15 LABELS unit
+)
+
+# ConfigureKeepAlive has internal linkage. Its tests include Acceptor.cpp in a
+# separate executable so production code needs no test hooks or public API changes.
+add_executable(${PROJECT_NAME}-KeepAliveTests Core/KeepAliveTest.cpp)
+target_link_libraries(${PROJECT_NAME}-KeepAliveTests
+        PRIVATE ${PROJECT_NAME} GTest::gtest_main spdlog::spdlog
+)
+enable_asan(${PROJECT_NAME}-KeepAliveTests)
+enable_coverage(${PROJECT_NAME}-KeepAliveTests)
+enable_project_warnings(${PROJECT_NAME}-KeepAliveTests)
+if (ENABLE_CLANG_TIDY AND PROJECT_CXX_CLANG_TIDY)
+    set_target_properties(${PROJECT_NAME}-KeepAliveTests
+            PROPERTIES CXX_CLANG_TIDY "${PROJECT_CXX_CLANG_TIDY}"
+    )
+endif ()
+if (WIN32)
+    set_property(TARGET ${PROJECT_NAME}-KeepAliveTests PROPERTY TEST_LAUNCHER
+            "${CMAKE_COMMAND};-E;env;PATH=${COMPILER_RUNTIME_DIR};--"
+    )
+endif ()
+gtest_discover_tests(${PROJECT_NAME}-KeepAliveTests
         DISCOVERY_MODE PRE_TEST
         DISCOVERY_TIMEOUT 10
         PROPERTIES TIMEOUT 15 LABELS unit

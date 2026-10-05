@@ -63,7 +63,8 @@ namespace Flux
         return static_cast<std::size_t>(scaledLimit);
     }
 
-    auto ConnectionManager::CreateConnection(boost::asio::ip::tcp::socket&& socket) const
+    auto ConnectionManager::CreateConnection(boost::asio::ip::tcp::socket&& socket,
+                                             const std::chrono::seconds idleTimeout) const
         -> std::expected<ConnectionPtr, ErrorCode>
     {
         const std::scoped_lock lock(_state->Mutex);
@@ -84,17 +85,19 @@ namespace Flux
                     const std::scoped_lock closeLock(state->Mutex);
                     state->Connections.erase(connectionToClose);
                 }
-            }));
+            },
+            idleTimeout));
 
         _state->Connections.insert(connection);
 
         return connection;
     }
 
-    auto ConnectionManager::CreateAndStartConnection(boost::asio::ip::tcp::socket&& socket) const
+    auto ConnectionManager::CreateAndStartConnection(boost::asio::ip::tcp::socket&& socket,
+                                                     const std::chrono::seconds idleTimeout) const
         -> std::expected<ConnectionPtr, ErrorCode>
     {
-        auto createResult = CreateConnection(std::move(socket));
+        auto createResult = CreateConnection(std::move(socket), idleTimeout);
 
         if (!createResult.has_value())
             return std::unexpected(createResult.error());

@@ -1,7 +1,10 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -20,10 +23,16 @@ namespace Flux
         friend class ConnectionManager;
 
     public:
+        static constexpr auto IdleTimeoutDuration = std::chrono::seconds(120);
+
+    public:
         auto AsyncStart() -> std::future<Result>;
         auto AsyncClose() -> std::future<Result>;
 
         auto Send(std::vector<std::byte>&& data) -> std::future<Result>;
+
+        auto SetIdleTimeout(const std::chrono::seconds idleTimeout) -> void;
+        auto GetIdleTimeout() const -> std::chrono::seconds;
 
     private:
         enum class Status : std::uint8_t
@@ -35,11 +44,8 @@ namespace Flux
 
     private:
         Connection(boost::asio::ip::tcp::socket&& socket,
-                   std::function<void(const std::shared_ptr<Connection>&)>&& onClose)
-            : _socket(std::move(socket))
-            , _readBuffer()
-            , _onClose(std::move(onClose))
-        {}
+                   std::function<void(const std::shared_ptr<Connection>&)>&& onClose,
+                   const std::chrono::seconds idleTimeout = IdleTimeoutDuration);
 
         auto Start() -> Result;
         auto Close() -> Result;
@@ -49,6 +55,8 @@ namespace Flux
         auto DoRead() -> Result;
         auto DoWrite() -> Result;
 
+        auto RestartIdleTimer() -> void;
+
     private:
         boost::asio::ip::tcp::socket _socket;
 
@@ -56,8 +64,13 @@ namespace Flux
         std::array<std::byte, BufferSize> _readBuffer;
 
         std::deque<std::shared_ptr<std::vector<std::byte>>> _sendQueue;
+        std::size_t _writeOffset = 0;
 
         std::function<void(const std::shared_ptr<Connection>&)> _onClose;
+
+        std::atomic<std::chrono::seconds> _idleTimeout;
+        boost::asio::steady_timer _idleTimer;
+        std::uint64_t _idleTimerGeneration = 0;
 
         Status _status = Status::NotInitialized;
     };
