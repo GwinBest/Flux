@@ -2,7 +2,6 @@
 
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/error.hpp>
-#include <boost/asio/write.hpp>
 #include <boost/system/system_error.hpp>
 #include <new>
 #include <system_error>
@@ -39,6 +38,30 @@ namespace Flux
                 return connection->QueueSend(std::move(data));
             });
     }
+
+    auto Connection::SetIdleTimeout(const std::chrono::seconds idleTimeout) -> void
+    {
+        _idleTimeout.store(idleTimeout);
+        boost::asio::dispatch(_socket.get_executor(), [self = shared_from_this()] -> void {
+            if (self->_status == Status::Started)
+                self->RestartIdleTimer();
+        });
+    }
+
+    auto Connection::GetIdleTimeout() const -> std::chrono::seconds
+    {
+        return _idleTimeout.load();
+    }
+
+    Connection::Connection(boost::asio::ip::tcp::socket&& socket,
+                           std::function<void(const std::shared_ptr<Connection>&)>&& onClose,
+                           const std::chrono::seconds idleTimeout)
+        : _socket(std::move(socket))
+        , _readBuffer()
+        , _onClose(std::move(onClose))
+        , _idleTimeout(idleTimeout)
+        , _idleTimer(_socket.get_executor())
+    {}
 
     auto Connection::QueueSend(std::vector<std::byte>&& data) -> Result
     {
@@ -81,6 +104,8 @@ namespace Flux
 
         _status = Status::Started;
 
+        RestartIdleTimer();
+
         const auto result = DoRead();
         if (!result)
         {
@@ -102,7 +127,10 @@ namespace Flux
 
         ErrorCode error = _socket.close(error);
 
+        _idleTimer.cancel();
+
         _sendQueue.clear();
+        _writeOffset = 0;
         _status = Status::Closed;
 
         _onClose(shared_from_this());
@@ -139,6 +167,8 @@ namespace Flux
                     return;
                 }
 
+                self->RestartIdleTimer();
+
                 // TODO: handle packet
 
                 if (const auto result = self->DoRead(); !result)
@@ -166,12 +196,11 @@ namespace Flux
 
         const auto data = _sendQueue.back();
 
-        boost::asio::async_write(
-            _socket,
-            boost::asio::buffer(*data),
+        _socket.async_write_some(
+            boost::asio::buffer(*data) + _writeOffset,
             // NOLINTNEXTLINE(misc-no-recursion)
             [self = shared_from_this(), data](const ErrorCode& errorCode,
-                                              [[maybe_unused]] std::size_t length) -> void {
+                                              const std::size_t length) -> void {
                 if (self->_status != Status::Started)
                     return;
 
@@ -186,7 +215,17 @@ namespace Flux
                     return;
                 }
 
-                self->_sendQueue.pop_back();
+                if (length > 0)
+                {
+                    self->_writeOffset += length;
+                    self->RestartIdleTimer();
+                }
+
+                if (self->_writeOffset == data->size())
+                {
+                    self->_sendQueue.pop_back();
+                    self->_writeOffset = 0;
+                }
 
                 if (const auto result = self->DoWrite(); !result)
                 {
@@ -200,5 +239,31 @@ namespace Flux
                 }
             });
         return {};
+    }
+
+    auto Connection::RestartIdleTimer() -> void
+    {
+        _idleTimer.expires_after(GetIdleTimeout());
+        const auto generation = ++_idleTimerGeneration;
+        _idleTimer.async_wait(
+            [self = shared_from_this(), generation](const ErrorCode& timerError) -> void {
+                if (self->_status != Status::Started || generation != self->_idleTimerGeneration)
+                    return;
+
+                if (timerError == boost::asio::error::operation_aborted)
+                {
+                    return;
+                }
+
+                if (!timerError)
+                {
+                    InfoLog("[Client] Timed out due to inactivity. Closing connection.\n");
+                    if (const auto closeResult = self->Close(); !closeResult)
+                    {
+                        ErrorLog("Failed to close connection after idle timeout: {}",
+                                 closeResult.error().message());
+                    }
+                }
+            });
     }
 }   // namespace Flux

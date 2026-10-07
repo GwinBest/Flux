@@ -1,6 +1,7 @@
 #pragma once
 
 #include <boost/asio/ip/tcp.hpp>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -8,6 +9,7 @@
 #include <mutex>
 #include <unordered_set>
 
+#include "Connection.hpp"
 #include "Utils/Error.hpp"
 #include "Utils/SystemResources.hpp"
 
@@ -50,9 +52,13 @@ namespace Flux
                                     const ConnectionLimitOptions& options = {})
                 -> std::expected<std::size_t, std::error_code>;
 
-        auto CreateConnection(boost::asio::ip::tcp::socket&& socket) const
+        auto CreateConnection(
+            boost::asio::ip::tcp::socket&& socket,
+            const std::chrono::seconds idleTimeout = Connection::IdleTimeoutDuration) const
             -> std::expected<ConnectionPtr, ErrorCode>;
-        auto CreateAndStartConnection(boost::asio::ip::tcp::socket&& socket) const
+        auto CreateAndStartConnection(
+            boost::asio::ip::tcp::socket&& socket,
+            const std::chrono::seconds idleTimeout = Connection::IdleTimeoutDuration) const
             -> std::expected<ConnectionPtr, ErrorCode>;
 
         [[nodiscard]] auto CloseConnection(const ConnectionPtr& connection) const -> Result;

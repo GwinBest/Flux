@@ -8,7 +8,10 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_future.hpp>
 #include <boost/system/system_error.hpp>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <expected>
@@ -55,6 +58,111 @@ namespace Flux::Test
     static_assert(!std::is_move_constructible_v<ConnectionManager>);
     static_assert(!std::is_copy_assignable_v<ConnectionManager>);
     static_assert(!std::is_move_assignable_v<ConnectionManager>);
+
+    TEST(ConnectionManagerTest, ConnectionFactoryPreservesDefaultAndCustomIdleTimeouts)
+    {
+        using namespace std::chrono_literals;
+        boost::asio::io_context context;
+        const ConnectionManager manager(2);
+        const auto defaultConnection = manager.CreateConnection(
+            boost::asio::ip::tcp::socket(context));
+        const auto customConnection = manager.CreateConnection(
+            boost::asio::ip::tcp::socket(context),
+            7s);
+        ASSERT_TRUE(defaultConnection.has_value());
+        ASSERT_TRUE(customConnection.has_value());
+        EXPECT_EQ(Connection::IdleTimeoutDuration, 120s);
+        EXPECT_EQ((*defaultConnection)->GetIdleTimeout(), 120s);
+        EXPECT_EQ((*customConnection)->GetIdleTimeout(), 7s);
+        customConnection.value()->SetIdleTimeout(9s);
+        EXPECT_EQ((*customConnection)->GetIdleTimeout(), 9s);
+        EXPECT_EQ((*defaultConnection)->GetIdleTimeout(), 120s);
+    }
+
+    TEST(ConnectionManagerTest, StartFactoryUsesDefaultIdleTimeout)
+    {
+        using namespace std::chrono_literals;
+        using Tcp = boost::asio::ip::tcp;
+        boost::asio::io_context context;
+        const ConnectionManager manager(1);
+        Tcp::acceptor listener(context, {boost::asio::ip::address_v4::loopback(), 0});
+        Tcp::socket peer(context);
+        peer.connect(listener.local_endpoint());
+        const auto connection = OnExecutor(context, context.get_executor(), [&] -> auto {
+            return manager.CreateAndStartConnection(listener.accept());
+        });
+        ASSERT_TRUE(connection.has_value());
+        EXPECT_EQ((*connection)->GetIdleTimeout(), 120s);
+        EXPECT_TRUE(AwaitFuture(context, (*connection)->Send({})).has_value());
+        EXPECT_TRUE(AwaitFuture(context, (*connection)->AsyncClose()).has_value());
+    }
+
+    TEST(ConnectionManagerTest, CustomIdleTimeoutExpiresOnlyItsOwnConnectionAndReleasesCapacity)
+    {
+        using namespace std::chrono_literals;
+        using Tcp = boost::asio::ip::tcp;
+        boost::asio::io_context context;
+        const ConnectionManager manager(2);
+        Tcp::acceptor listener(context, {boost::asio::ip::address_v4::loopback(), 0});
+        Tcp::socket firstPeer(context);
+        Tcp::socket secondPeer(context);
+        firstPeer.connect(listener.local_endpoint());
+        const auto first = OnExecutor(context, context.get_executor(), [&] -> auto {
+            return manager.CreateAndStartConnection(listener.accept(), 1s);
+        });
+        ASSERT_TRUE(first.has_value());
+        secondPeer.connect(listener.local_endpoint());
+        const auto second = OnExecutor(context, context.get_executor(), [&] -> auto {
+            return manager.CreateAndStartConnection(listener.accept(), 5s);
+        });
+        ASSERT_TRUE(second.has_value());
+        EXPECT_EQ((*first)->GetIdleTimeout(), 1s);
+        EXPECT_EQ((*second)->GetIdleTimeout(), 5s);
+        const auto full = manager.CreateConnection(Tcp::socket(context));
+        ASSERT_FALSE(full.has_value());
+        EXPECT_EQ(full.error(), MakeErrorCode(Error::ConnectionLimitReached));
+        boost::asio::steady_timer wait(context, 1200ms);
+        AwaitFuture(context, wait.async_wait(boost::asio::use_future));
+        const auto expired = AwaitFuture(context, first.value()->Send({}));
+        ASSERT_FALSE(expired.has_value());
+        EXPECT_EQ(expired.error(), MakeErrorCode(Error::ConnectionClosed));
+        ASSERT_NO_FATAL_FAILURE(ExpectPeerClosed(context, firstPeer));
+        EXPECT_TRUE(AwaitFuture(context, (*second)->Send({})).has_value());
+        const auto replacement = manager.CreateConnection(Tcp::socket(context));
+        ASSERT_TRUE(replacement.has_value());
+        EXPECT_TRUE(OnExecutor(context, context.get_executor(), [&] -> Result {
+                        return manager.CloseAllConnections();
+                    }).has_value());
+        EXPECT_TRUE(AwaitFuture(context, (*first)->AsyncClose()).has_value());
+        context.restart();
+        context.poll();
+        EXPECT_TRUE(context.stopped());
+    }
+
+    TEST(ConnectionManagerTest, IdleTimeoutReleasesActiveConnectionAfterManagerDestruction)
+    {
+        using namespace std::chrono_literals;
+        using Tcp = boost::asio::ip::tcp;
+        boost::asio::io_context context;
+        Tcp::acceptor listener(context, {boost::asio::ip::address_v4::loopback(), 0});
+        Tcp::socket peer(context);
+        peer.connect(listener.local_endpoint());
+        std::weak_ptr<Connection> weakConnection;
+        {
+            const ConnectionManager manager(1);
+            const auto connection = OnExecutor(context, context.get_executor(), [&] -> auto {
+                return manager.CreateAndStartConnection(listener.accept(), 1s);
+            });
+            ASSERT_TRUE(connection.has_value());
+            weakConnection = *connection;
+        }
+        EXPECT_FALSE(weakConnection.expired());
+        ASSERT_TRUE(PumpUntil(context, [&] -> bool { return weakConnection.expired(); }));
+        ASSERT_NO_FATAL_FAILURE(ExpectPeerClosed(context, peer));
+        context.restart();
+        context.poll();
+        EXPECT_TRUE(context.stopped());
+    }
 
     TEST(ConnectionManagerTest, CalculatesSmallerResourceBudgetWithSafetyMargin)
     {

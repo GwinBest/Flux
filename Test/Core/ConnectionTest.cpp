@@ -20,6 +20,7 @@ namespace Flux::Test
     {
         using Tcp = boost::asio::ip::tcp;
         using namespace std::chrono_literals;
+        constexpr std::size_t PayloadPatternPeriod = 251;
 
         class ConnectionTest : public testing::Test
         {
@@ -139,12 +140,15 @@ namespace Flux::Test
         std::vector<std::byte> expected;
         std::vector<std::vector<std::byte>> messages;
         constexpr unsigned char messageCount = 8;
-        constexpr std::size_t messageSize = 32768;
+        constexpr std::size_t messageSize = (1024 * 1024) + 17;
         messages.reserve(messageCount);
         expected.reserve(messageCount * messageSize);
         for (unsigned char index = 1; index <= messageCount; ++index)
         {
-            messages.emplace_back(messageSize, static_cast<std::byte>(index));
+            messages.emplace_back(messageSize);
+            for (std::size_t offset = 0; offset < messageSize; ++offset)
+                messages.back().at(offset) = static_cast<std::byte>((offset + index)
+                                                                    % PayloadPatternPeriod);
             expected.insert(expected.end(), messages.back().begin(), messages.back().end());
         }
         // All sends run inside one strand handler, before any write completion can run.
@@ -224,6 +228,64 @@ namespace Flux::Test
         const std::weak_ptr weakConnection = _connection;
         _connection.reset();
         EXPECT_TRUE(PumpUntil(_context, [&] -> bool { return weakConnection.expired(); }));
+    }
+
+    TEST(ConnectionAsyncTest, SmallSocketBuffersPreserveByteOrderAcrossUnevenMessagesAndEmptySends)
+    {
+        boost::asio::io_context context;
+        const auto strand = boost::asio::make_strand(context);
+        Tcp::acceptor listener(context, {boost::asio::ip::address_v4::loopback(), 0});
+        Tcp::socket peer(context);
+        peer.open(Tcp::v4());
+        constexpr int receiveBufferSize = 16384;
+        peer.set_option(Tcp::socket::receive_buffer_size(receiveBufferSize));
+        peer.connect(listener.local_endpoint());
+        Tcp::socket socket(strand);
+        listener.accept(socket);
+        constexpr int sendBufferSize = 1024;
+        socket.set_option(Tcp::socket::send_buffer_size(sendBufferSize));
+        socket.set_option(Tcp::no_delay(true));
+        const ConnectionManager manager(1);
+        const auto connection = manager.CreateConnection(std::move(socket));
+        ASSERT_TRUE(connection.has_value());
+        ASSERT_TRUE(AwaitFuture(context, (*connection)->AsyncStart()).has_value());
+
+        std::vector<std::byte> expected;
+        OnExecutor(context, strand, [&] -> void {
+            for (const std::size_t size : {1U, 65537U, 3U, 262161U, 17U})
+            {
+                std::vector<std::byte> payload(size);
+                for (std::size_t index = 0; index < size; ++index)
+                    payload.at(index) = static_cast<std::byte>((expected.size() + index)
+                                                               % PayloadPatternPeriod);
+                expected.insert(expected.end(), payload.begin(), payload.end());
+                ASSERT_TRUE((*connection)->Send(std::move(payload)).get().has_value());
+                ASSERT_TRUE((*connection)->Send({}).get().has_value());
+            }
+        });
+
+        // Let the small TCP buffers fill before the peer starts draining them.
+        boost::asio::steady_timer backpressure(context, 100ms);
+        AwaitFuture(context, backpressure.async_wait(boost::asio::use_future));
+        std::vector<std::byte> received(expected.size());
+        auto read = boost::asio::async_read(peer,
+                                            boost::asio::buffer(received),
+                                            boost::asio::use_future);
+        ASSERT_EQ(AwaitFuture(context, std::move(read)), expected.size());
+        EXPECT_EQ(received, expected);
+        // A fresh write after draining the queue must start with an offset of zero.
+        const std::vector tail {std::byte {9}, std::byte {8}, std::byte {7}};
+        std::vector<std::byte> receivedTail(tail.size());
+        auto tailRead = boost::asio::async_read(peer,
+                                                boost::asio::buffer(receivedTail),
+                                                boost::asio::use_future);
+        EXPECT_TRUE(AwaitFuture(context, (*connection)->Send(std::vector(tail))).has_value());
+        EXPECT_EQ(AwaitFuture(context, std::move(tailRead)), tail.size());
+        EXPECT_EQ(receivedTail, tail);
+        EXPECT_TRUE(AwaitFuture(context, (*connection)->AsyncClose()).has_value());
+        context.restart();
+        context.poll();
+        EXPECT_TRUE(context.stopped());
     }
 
     TEST(ConnectionAsyncTest, WriteFailureClosesAndUnregistersConnection)
