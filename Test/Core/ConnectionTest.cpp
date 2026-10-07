@@ -168,8 +168,9 @@ namespace Flux::Test
 
     TEST_F(ConnectionTest, ReadsMoreThanOneBufferAndClosesOnPeerEof)
     {
-        Start();
         constexpr auto payloadSize = static_cast<std::size_t>(128 * 1024);
+        _connection->SetMaxRequestSize(payloadSize);
+        Start();
         const std::vector<std::byte> data(payloadSize, std::byte {42});
         auto write = boost::asio::async_write(_peer,
                                               boost::asio::buffer(data),

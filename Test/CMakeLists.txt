@@ -32,6 +32,7 @@ add_executable(${PROJECT_NAME}-Tests
         Core/AcceptorTest.cpp
         Core/ConnectionManagerTest.cpp
         Core/ConnectionTest.cpp
+        Core/ConnectionRequestSizeTest.cpp
         Core/ConnectionIdleTimeoutTest.cpp
         Core/IoContextPoolTest.cpp
         Utils/ErrorTest.cpp

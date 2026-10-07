@@ -210,7 +210,7 @@ namespace Flux
 
         _status = Status::Stopped;
 
-        std::size_t cancelledTimers = 0U;
+        std::size_t cancelledTimers = 0;
 
         try
         {
