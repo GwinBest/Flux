@@ -178,16 +178,41 @@ namespace Flux::Test
         ExpectPolicy(_socket, options);
     }
 
-    TEST_P(KeepAliveTest, ReportsNativeErrorForOutOfRangeProbeCount)
+    TEST_P(KeepAliveTest, HonorsNativeProbeCountLimit)
     {
         constexpr KeepAliveOptions options {
             .IdleSeconds = 60,
             .IntervalSeconds = 5,
             .ProbeCount = std::numeric_limits<int>::max(),
         };
+#ifdef __APPLE__
+        // Darwin accepts TCP_KEEPCNT up to INT32_MAX; INT_MAX is not out of range.
+        const auto error = ConfigureKeepAlive(_socket, options);
+        ASSERT_FALSE(error) << error.message();
+        ExpectPolicy(_socket, options);
+#else
         EXPECT_EQ(ConfigureKeepAlive(_socket, options), boost::asio::error::invalid_argument);
+#endif
         EXPECT_TRUE(_socket.is_open());
     }
+
+#ifdef __APPLE__
+    TEST_P(KeepAliveTest, ReportsNativeErrorForOutOfRangeTimeouts)
+    {
+        // Darwin limits these seconds values to UINT32_MAX / TCP_RETRANSHZ.
+        constexpr auto maximum = std::numeric_limits<int>::max();
+        for (const auto& options : {
+                 KeepAliveOptions {.IdleSeconds = maximum, .IntervalSeconds = 5,       .ProbeCount = 3},
+                 KeepAliveOptions {.IdleSeconds = 60,      .IntervalSeconds = maximum, .ProbeCount = 3},
+        })
+        {
+            SCOPED_TRACE(testing::Message()
+                         << options.IdleSeconds << ',' << options.IntervalSeconds);
+            EXPECT_EQ(ConfigureKeepAlive(_socket, options), boost::asio::error::invalid_argument);
+            EXPECT_TRUE(_socket.is_open());
+        }
+    }
+#endif
 
 #ifdef _WIN32
     TEST_P(KeepAliveTest, AcceptsLargestTimeoutsWithoutMillisecondOverflow)
