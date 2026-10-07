@@ -31,8 +31,11 @@ namespace Flux
 
         auto Send(std::vector<std::byte>&& data) -> std::future<Result>;
 
+        auto SetMaxRequestSize(const std::size_t maxRequestSize) -> void;
+        [[nodiscard]] auto GetMaxRequestSize() const -> std::size_t;
+
         auto SetIdleTimeout(const std::chrono::seconds idleTimeout) -> void;
-        auto GetIdleTimeout() const -> std::chrono::seconds;
+        [[nodiscard]] auto GetIdleTimeout() const -> std::chrono::seconds;
 
     private:
         enum class Status : std::uint8_t
@@ -62,6 +65,10 @@ namespace Flux
 
         static constexpr std::uint16_t BufferSize = 1024 * 8;
         std::array<std::byte, BufferSize> _readBuffer;
+
+        static constexpr std::size_t DefaultMaxRequestSize = BufferSize * 4ULL;
+        std::atomic<std::size_t> _maxRequestSize;
+        std::vector<std::byte> _incomingBuffer;
 
         std::deque<std::shared_ptr<std::vector<std::byte>>> _sendQueue;
         std::size_t _writeOffset = 0;

@@ -4,6 +4,7 @@
 #include <boost/asio/error.hpp>
 #include <boost/system/system_error.hpp>
 #include <new>
+#include <span>
 #include <system_error>
 
 #include "Utils/Async.hpp"
@@ -39,6 +40,16 @@ namespace Flux
             });
     }
 
+    auto Connection::SetMaxRequestSize(const std::size_t maxRequestSize) -> void
+    {
+        _maxRequestSize.store(maxRequestSize);
+    }
+
+    auto Connection::GetMaxRequestSize() const -> std::size_t
+    {
+        return _maxRequestSize.load();
+    }
+
     auto Connection::SetIdleTimeout(const std::chrono::seconds idleTimeout) -> void
     {
         _idleTimeout.store(idleTimeout);
@@ -58,6 +69,7 @@ namespace Flux
                            const std::chrono::seconds idleTimeout)
         : _socket(std::move(socket))
         , _readBuffer()
+        , _maxRequestSize(DefaultMaxRequestSize)
         , _onClose(std::move(onClose))
         , _idleTimeout(idleTimeout)
         , _idleTimer(_socket.get_executor())
@@ -104,6 +116,8 @@ namespace Flux
 
         _status = Status::Started;
 
+        _incomingBuffer.clear();
+
         RestartIdleTimer();
 
         const auto result = DoRead();
@@ -129,8 +143,10 @@ namespace Flux
 
         _idleTimer.cancel();
 
+        _incomingBuffer.clear();
         _sendQueue.clear();
         _writeOffset = 0;
+
         _status = Status::Closed;
 
         _onClose(shared_from_this());
@@ -152,7 +168,7 @@ namespace Flux
         _socket.async_read_some(
             boost::asio::buffer(_readBuffer),
             [self = shared_from_this()](const ErrorCode& errorCode,
-                                        std::size_t /*length*/) -> void {
+                                        const std::size_t length) -> void {
                 if (self->_status != Status::Started)
                     return;
 
@@ -167,9 +183,30 @@ namespace Flux
                     return;
                 }
 
+                if (const auto limit = self->GetMaxRequestSize();
+                    self->_incomingBuffer.size() + length > limit)
+                {
+                    ErrorLog("Max request size exceeded! Current: {}, Limit: {}",
+                             self->_incomingBuffer.size() + length,
+                             limit);
+
+                    if (const auto closeResult = self->Close(); !closeResult)
+                    {
+                        ErrorLog("Failed to close connection after request size limit exceeded: {}",
+                                 closeResult.error().message());
+                    }
+                    return;
+                    // TODO: return http 413
+                }
+
+                const auto received = std::span(self->_readBuffer).first(length);
+                self->_incomingBuffer.insert(self->_incomingBuffer.end(),
+                                             received.begin(),
+                                             received.end());
+
                 self->RestartIdleTimer();
 
-                // TODO: handle packet
+                // TODO: handle packet and remove packet from incoming buffer
 
                 if (const auto result = self->DoRead(); !result)
                 {
