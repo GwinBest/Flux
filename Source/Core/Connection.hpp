@@ -34,6 +34,9 @@ namespace Flux
         auto SetMaxRequestSize(const std::size_t maxRequestSize) -> void;
         [[nodiscard]] auto GetMaxRequestSize() const -> std::size_t;
 
+        auto SetMaxSendQueue(const std::size_t maxSendQueue) -> void;
+        [[nodiscard]] auto GetMaxSendQueue() const -> std::size_t;
+
         auto SetIdleTimeout(const std::chrono::seconds idleTimeout) -> void;
         [[nodiscard]] auto GetIdleTimeout() const -> std::chrono::seconds;
 
@@ -70,6 +73,8 @@ namespace Flux
         std::atomic<std::size_t> _maxRequestSize;
         std::vector<std::byte> _incomingBuffer;
 
+        std::size_t _pendingSendBytes = 0;
+        std::atomic<std::size_t> _maxSendQueue;
         std::deque<std::shared_ptr<std::vector<std::byte>>> _sendQueue;
         std::size_t _writeOffset = 0;
 
