@@ -215,6 +215,19 @@ namespace Flux::Test
         AwaitPeerClose();
     }
 
+    TEST_F(ConnectionIdleTimeoutTest, RejectedSendDoesNotExtendDeadline)
+    {
+        _connection->SetMaxSendQueue(0);
+        ASSERT_NO_FATAL_FAILURE(Start());
+        RunFor(650ms);
+        const auto rejected = AwaitFuture(_context, _connection->Send({std::byte {1}}));
+        ASSERT_FALSE(rejected.has_value());
+        EXPECT_EQ(rejected.error(), MakeErrorCode(Error::SendQueueFull));
+        RunFor(550ms);
+        ASSERT_NO_FATAL_FAILURE(ExpectClosed());
+        AwaitPeerClose();
+    }
+
     TEST_F(ConnectionIdleTimeoutTest, RejectedRepeatedStartDoesNotExtendDeadline)
     {
         ASSERT_NO_FATAL_FAILURE(Start());
@@ -436,12 +449,11 @@ namespace Flux::Test
         ASSERT_NO_FATAL_FAILURE(Start());
         OnExecutor(_context, _strand, [&] -> void {
             constexpr auto payloadSize = static_cast<std::size_t>(4 * 1024 * 1024);
-            ASSERT_TRUE(_connection->Send(std::vector<std::byte>(payloadSize, std::byte {1}))
-                            .get()
-                            .has_value());
-            ASSERT_TRUE(_connection->Send(std::vector<std::byte>(payloadSize, std::byte {2}))
-                            .get()
-                            .has_value());
+            _connection->SetMaxSendQueue(payloadSize * 2);
+            ASSERT_TRUE(
+                _connection->Send(std::vector(payloadSize, std::byte {1})).get().has_value());
+            ASSERT_TRUE(
+                _connection->Send(std::vector(payloadSize, std::byte {2})).get().has_value());
         });
         const std::weak_ptr weakConnection = _connection;
         _connection.reset();

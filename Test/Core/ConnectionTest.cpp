@@ -1,6 +1,7 @@
 #include "Core/Connection.hpp"
 #include "gtest/gtest.h"
 
+#include <array>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/read.hpp>
 #include <boost/asio/strand.hpp>
@@ -9,6 +10,7 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <numeric>
 #include <vector>
 
 #include "../Support/Async.hpp"
@@ -141,6 +143,7 @@ namespace Flux::Test
         std::vector<std::vector<std::byte>> messages;
         constexpr unsigned char messageCount = 8;
         constexpr std::size_t messageSize = (1024 * 1024) + 17;
+        _connection->SetMaxSendQueue(messageCount * messageSize);
         messages.reserve(messageCount);
         expected.reserve(messageCount * messageSize);
         for (unsigned char index = 1; index <= messageCount; ++index)
@@ -219,11 +222,13 @@ namespace Flux::Test
         Start();
         OnExecutor(_context, _strand, [&] -> void {
             constexpr auto pendingPayloadSize = static_cast<std::size_t>(4 * 1024 * 1024);
-            EXPECT_TRUE(_connection->Send(std::vector<std::byte>(pendingPayloadSize, std::byte {1}))
+            constexpr std::size_t queuedPayloadSize = 1024;
+            _connection->SetMaxSendQueue(pendingPayloadSize + queuedPayloadSize);
+            EXPECT_TRUE(_connection->Send(std::vector(pendingPayloadSize, std::byte {1}))
                             .get()
                             .has_value());
             EXPECT_TRUE(
-                _connection->Send(std::vector<std::byte>(1024, std::byte {2})).get().has_value());
+                _connection->Send(std::vector(queuedPayloadSize, std::byte {2})).get().has_value());
             EXPECT_TRUE(_connection->AsyncClose().get().has_value());
         });
         const std::weak_ptr weakConnection = _connection;
@@ -251,9 +256,12 @@ namespace Flux::Test
         ASSERT_TRUE(connection.has_value());
         ASSERT_TRUE(AwaitFuture(context, (*connection)->AsyncStart()).has_value());
 
+        constexpr std::array<std::size_t, 5> messageSizes {1, 65537, 3, 262161, 17};
+        connection.value()->SetMaxSendQueue(
+            std::accumulate(messageSizes.begin(), messageSizes.end(), std::size_t {0}));
         std::vector<std::byte> expected;
         OnExecutor(context, strand, [&] -> void {
-            for (const std::size_t size : {1U, 65537U, 3U, 262161U, 17U})
+            for (const auto size : messageSizes)
             {
                 std::vector<std::byte> payload(size);
                 for (std::size_t index = 0; index < size; ++index)

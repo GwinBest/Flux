@@ -50,6 +50,16 @@ namespace Flux
         return _maxRequestSize.load();
     }
 
+    auto Connection::SetMaxSendQueue(const std::size_t maxSendQueue) -> void
+    {
+        _maxSendQueue.store(maxSendQueue);
+    }
+
+    auto Connection::GetMaxSendQueue() const -> std::size_t
+    {
+        return _maxSendQueue.load();
+    }
+
     auto Connection::SetIdleTimeout(const std::chrono::seconds idleTimeout) -> void
     {
         _idleTimeout.store(idleTimeout);
@@ -70,9 +80,13 @@ namespace Flux
         : _socket(std::move(socket))
         , _readBuffer()
         , _maxRequestSize(DefaultMaxRequestSize)
+        , _pendingSendBytes(0)
+        , _maxSendQueue(DefaultMaxRequestSize)
+        , _writeOffset(0)
         , _onClose(std::move(onClose))
         , _idleTimeout(idleTimeout)
         , _idleTimer(_socket.get_executor())
+        , _idleTimerGeneration(0)
     {}
 
     auto Connection::QueueSend(std::vector<std::byte>&& data) -> Result
@@ -86,7 +100,21 @@ namespace Flux
         if (data.empty())
             return {};
 
+        if (const auto maxSendQueue = GetMaxSendQueue();
+            _pendingSendBytes + data.size() > maxSendQueue)
+        {
+            ErrorLog("Send queue limit exceeded: {} bytes, limit: {}",
+                     _pendingSendBytes + data.size(),
+                     maxSendQueue);
+
+            return std::unexpected(MakeErrorCode(Error::SendQueueFull));
+
+            // TODO: return http 503
+        }
+
         _sendQueue.emplace_front(std::make_shared<std::vector<std::byte>>(std::move(data)));
+        _pendingSendBytes += _sendQueue.front()->size();
+
         if (_sendQueue.size() == 1)
         {
             if (const auto result = DoWrite(); !result)
@@ -145,6 +173,7 @@ namespace Flux
 
         _incomingBuffer.clear();
         _sendQueue.clear();
+        _pendingSendBytes = 0;
         _writeOffset = 0;
 
         _status = Status::Closed;
@@ -260,6 +289,7 @@ namespace Flux
 
                 if (self->_writeOffset == data->size())
                 {
+                    self->_pendingSendBytes -= data->size();
                     self->_sendQueue.pop_back();
                     self->_writeOffset = 0;
                 }
