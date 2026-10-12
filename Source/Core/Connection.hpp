@@ -73,16 +73,16 @@ namespace Flux
         std::atomic<std::size_t> _maxRequestSize;
         std::vector<std::byte> _incomingBuffer;
 
-        std::size_t _pendingSendBytes;
+        std::size_t _pendingSendBytes = 0;
         std::atomic<std::size_t> _maxSendQueue;
         std::deque<std::shared_ptr<std::vector<std::byte>>> _sendQueue;
-        std::size_t _writeOffset;
+        std::size_t _writeOffset = 0;
 
         std::function<void(const std::shared_ptr<Connection>&)> _onClose;
 
         std::atomic<std::chrono::seconds> _idleTimeout;
         boost::asio::steady_timer _idleTimer;
-        std::uint64_t _idleTimerGeneration;
+        std::uint64_t _idleTimerGeneration = 0;
 
         Status _status = Status::NotInitialized;
     };

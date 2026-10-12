@@ -80,13 +80,10 @@ namespace Flux
         : _socket(std::move(socket))
         , _readBuffer()
         , _maxRequestSize(DefaultMaxRequestSize)
-        , _pendingSendBytes(0)
         , _maxSendQueue(DefaultMaxRequestSize)
-        , _writeOffset(0)
         , _onClose(std::move(onClose))
         , _idleTimeout(idleTimeout)
         , _idleTimer(_socket.get_executor())
-        , _idleTimerGeneration(0)
     {}
 
     auto Connection::QueueSend(std::vector<std::byte>&& data) -> Result
