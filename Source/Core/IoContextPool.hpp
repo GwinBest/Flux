@@ -53,10 +53,10 @@ namespace Flux
         WorkGuard _workGuard;
 
         std::vector<std::jthread> _threads;
-        std::size_t _threadCount = std::thread::hardware_concurrency();
+        std::size_t _threadCount;
         std::mutex _mutex;
 
-        std::atomic<Status> _status = Status::NotInitialized;
+        std::atomic<Status> _status;
     };
 
 }   // namespace Flux
