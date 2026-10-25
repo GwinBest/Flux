@@ -164,7 +164,8 @@ namespace Flux
         if (_status == Status::Closed)
             return {};
 
-        ErrorCode error = _socket.close(error);
+        ErrorCode error;
+        error = _socket.close(error);
 
         _idleTimer.cancel();
 
