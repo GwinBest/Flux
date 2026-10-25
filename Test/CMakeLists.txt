@@ -1,7 +1,5 @@
 include(FetchContent)
 
-enable_coverage(${PROJECT_NAME})
-
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 if (MSVC)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)

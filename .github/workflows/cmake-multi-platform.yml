@@ -129,6 +129,8 @@ jobs:
           cmake -S . -B build -G Ninja
           -DCMAKE_CXX_COMPILER=g++
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DBUILD_DEMO=ON
+          -DENABLE_COVERAGE=${{ matrix.build_type == 'Debug' && 'ON' || 'OFF' }}
           -DBUILD_TEST=ON
           -DENABLE_CLANG_TIDY=OFF
           -DENABLE_CLANG_FORMAT=OFF
@@ -168,6 +170,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - variant: GCC coverage + demo
+            os: ubuntu-24.04
+            build_type: Debug
+            compiler: g++-14
+            packages: g++-14
+            cmake_args: -DENABLE_COVERAGE=ON -DBUILD_DEMO=ON
+          - variant: Clang coverage + demo
+            os: ubuntu-24.04
+            build_type: Debug
+            compiler: clang++-22
+            packages: clang-22 libclang-rt-22-dev llvm-22
+            cmake_args: -DENABLE_COVERAGE=ON -DBUILD_DEMO=ON
           - variant: ASan + UBSan
             os: ubuntu-24.04
             build_type: Debug
