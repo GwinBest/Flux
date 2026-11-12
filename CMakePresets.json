@@ -14,6 +14,17 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "BUILD_DEMO": "ON",
+        "BUILD_TEST": "ON"
+      }
+    },
+    {
+      "name": "debug-coverage",
+      "displayName": "Debug-Coverage",
+      "description": "Debug build with demo and tests enabled.",
+      "binaryDir": "${sourceDir}/Build/DebugCoverage",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_DEMO": "ON",
         "BUILD_TEST": "ON",
         "ENABLE_COVERAGE": "ON"
       }
@@ -35,7 +46,49 @@
       "binaryDir": "${sourceDir}/Build/RelWithDebInfo",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "BUILD_DEMO": "ON"
+        "BUILD_DEMO": "ON",
+        "BUILD_TEST": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "debug-coverage",
+      "configurePreset": "debug-coverage"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "relwithdebinfo",
+      "configurePreset": "relwithdebinfo"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "debug-coverage",
+      "configurePreset": "debug-coverage",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "relwithdebinfo",
+      "configurePreset": "relwithdebinfo",
+      "output": {
+        "outputOnFailure": true
       }
     }
   ]

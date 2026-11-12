@@ -13,15 +13,9 @@ jobs:
       # Set fail-fast to false to ensure that feedback is delivered for all matrix combinations. Consider changing this to true when your workflow is stable.
       fail-fast: false
 
-      # Set up a matrix to run the following 3 configurations:
-      # 1. <Windows, Release, latest MSVC compiler toolchain on the default runner image, default generator>
-      # 2. <Linux, Release, latest GCC compiler toolchain on the default runner image, default generator>
-      # 3. <Linux, Release, latest Clang compiler toolchain on the default runner image, default generator>
-      #
-      # To add more build types (Release, Debug, RelWithDebInfo, etc.) customize the build_type list.
       matrix:
         os: [ ubuntu-latest, windows-latest, macos-latest ]
-        build_type: [ Debug, Release ]
+        build_type: [ debug, release ]
         c_compiler: [ gcc-14, clang-19, clang, cl ]
         include:
           - os: windows-latest
@@ -72,36 +66,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y g++-14 clang-19
 
-      - name: Set reusable strings
-        # Turn repeated input strings (such as the build output directory) into step outputs. These step outputs can be used throughout the workflow file.
-        id: strings
-        shell: bash
-        run: |
-          echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
-
       - name: Configure CMake
-        # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
-        # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
         run: >
-          cmake -B ${{ steps.strings.outputs.build-output-dir }}
+          cmake --preset ${{ matrix.build_type }}
           -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
           -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DBUILD_TEST=ON
-          -DENABLE_CLANG_TIDY=OFF
-          -DENABLE_CLANG_FORMAT=OFF
-          -DENABLE_ASAN=OFF
-          -S ${{ github.workspace }}
+          -DBUILD_DEMO=OFF
 
       - name: Build
-        # Build your program with the given configuration. Note that --config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
-        run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
+        run: >
+          cmake --build 
+          --preset ${{ matrix.build_type }} 
+          --config ${{ matrix.build_type }}
 
       - name: Test
-        working-directory: ${{ steps.strings.outputs.build-output-dir }}
-        # Execute tests defined by the CMake configuration. Note that --build-config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
-        # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
-        run: ctest --build-config ${{ matrix.build_type }} --output-on-failure
+        run: ctest --preset ${{ matrix.build_type }}
 
   build-mingw:
     name: MinGW (${{ matrix.build_type }})
@@ -109,7 +89,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build_type: [ Debug, Release ]
+        build_type: [ debug, release ]
     defaults:
       run:
         shell: msys2 {0}
@@ -126,20 +106,19 @@ jobs:
             mingw-w64-ucrt-x86_64-ninja
       - name: Configure CMake
         run: >
-          cmake -S . -B build -G Ninja
+          cmake --preset ${{ matrix.build_type }}
           -DCMAKE_CXX_COMPILER=g++
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DBUILD_DEMO=ON
-          -DENABLE_COVERAGE=${{ matrix.build_type == 'Debug' && 'ON' || 'OFF' }}
+          -DENABLE_COVERAGE=${{ matrix.build_type == 'debug' && 'ON' || 'OFF' }}
           -DBUILD_TEST=ON
           -DENABLE_CLANG_TIDY=OFF
           -DENABLE_CLANG_FORMAT=OFF
           -DENABLE_ASAN=OFF
           -DENABLE_UBSAN=OFF
       - name: Build
-        run: cmake --build build --parallel 2
+        run: cmake --build --preset ${{ matrix.build_type }} --parallel 2
       - name: Test
-        run: ctest --test-dir build --output-on-failure --no-tests=error
+        run: ctest --preset ${{ matrix.build_type }} --no-tests=error
 
   build-clang-cl:
     name: Windows clang-cl (${{ matrix.build_type }})
@@ -147,21 +126,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build_type: [ Debug, Release ]
+        build_type: [ debug, release ]
     steps:
       - uses: actions/checkout@v4
       - name: Configure CMake
         run: >
-          cmake -S . -B build -A x64 -T ClangCL
+          cmake --preset ${{ matrix.build_type }} -A x64 -T ClangCL
           -DBUILD_TEST=ON
           -DENABLE_CLANG_TIDY=OFF
           -DENABLE_CLANG_FORMAT=OFF
           -DENABLE_ASAN=OFF
           -DENABLE_UBSAN=OFF
       - name: Build
-        run: cmake --build build --config ${{ matrix.build_type }} --parallel 2
+        run: cmake --build --preset ${{ matrix.build_type }} --config ${{ matrix.build_type }} --parallel 2
       - name: Test
-        run: ctest --test-dir build --build-config ${{ matrix.build_type }} --output-on-failure --no-tests=error
+        run: ctest --preset ${{ matrix.build_type }} --no-tests=error
 
   build-linux-extra:
     name: Linux ${{ matrix.variant }} (${{ matrix.build_type }})
@@ -172,49 +151,49 @@ jobs:
         include:
           - variant: GCC coverage + demo
             os: ubuntu-24.04
-            build_type: Debug
+            build_type: debug
             compiler: g++-14
             packages: g++-14
             cmake_args: -DENABLE_COVERAGE=ON -DBUILD_DEMO=ON
           - variant: Clang coverage + demo
             os: ubuntu-24.04
-            build_type: Debug
+            build_type: debug
             compiler: clang++-22
             packages: clang-22 libclang-rt-22-dev llvm-22
             cmake_args: -DENABLE_COVERAGE=ON -DBUILD_DEMO=ON
           - variant: ASan + UBSan
             os: ubuntu-24.04
-            build_type: Debug
+            build_type: debug
             compiler: clang++-22
             packages: clang-22 libclang-rt-22-dev llvm-22
             cmake_args: -DENABLE_ASAN=ON -DENABLE_UBSAN=ON
           - variant: TSan
             os: ubuntu-24.04
-            build_type: Debug
+            build_type: debug
             compiler: clang++-22
             packages: clang-22 libclang-rt-22-dev llvm-22
             cmake_args: -DENABLE_TSAN=ON
           - variant: libc++
             os: ubuntu-24.04
-            build_type: Debug
+            build_type: debug
             compiler: clang++-22
             packages: clang-22 libc++-22-dev libc++abi-22-dev
             cmake_args: -DCMAKE_CXX_FLAGS=-stdlib=libc++
           - variant: libc++
             os: ubuntu-24.04
-            build_type: Release
+            build_type: release
             compiler: clang++-22
             packages: clang-22 libc++-22-dev libc++abi-22-dev
             cmake_args: -DCMAKE_CXX_FLAGS=-stdlib=libc++
           - variant: ARM64
             os: ubuntu-24.04-arm
-            build_type: Debug
+            build_type: debug
             compiler: g++-14
             packages: g++-14
             cmake_args: ''
           - variant: ARM64
             os: ubuntu-24.04-arm
-            build_type: Release
+            build_type: release
             compiler: g++-14
             packages: g++-14
             cmake_args: ''
@@ -241,9 +220,8 @@ jobs:
           sudo apt-get install -y ninja-build ${{ matrix.packages }}
       - name: Configure CMake
         run: >
-          cmake -S . -B build -G Ninja
+          cmake --preset ${{ matrix.build_type }}
           -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DBUILD_TEST=ON
           -DENABLE_CLANG_TIDY=OFF
           -DENABLE_CLANG_FORMAT=OFF
@@ -253,9 +231,9 @@ jobs:
           -DENABLE_SANITIZERS_STRICT=ON
           ${{ matrix.cmake_args }}
       - name: Build
-        run: cmake --build build --parallel 2
+        run: cmake --build --preset ${{ matrix.build_type }} --parallel 2
       - name: Test
-        run: ctest --test-dir build --output-on-failure --no-tests=error
+        run: ctest --preset ${{ matrix.build_type }} --no-tests=error
 
   lint:
     runs-on: ubuntu-latest
@@ -280,10 +258,9 @@ jobs:
 
       - name: Configure CMake (strict lint mode)
         run: >
-          cmake -B ${{ github.workspace }}/build-lint
+          cmake --preset debug
           -DCMAKE_C_COMPILER=clang
           -DCMAKE_CXX_COMPILER=clang++
-          -DCMAKE_BUILD_TYPE=Debug
           -DBUILD_TEST=ON
           -DENABLE_ASAN=OFF
           -DENABLE_UBSAN=OFF
@@ -292,10 +269,9 @@ jobs:
           -DENABLE_LINT_STRICT=ON
           -DCLANG_TIDY_EXE=/usr/lib/llvm-22/bin/clang-tidy
           -DCLANG_FORMAT_EXE=/usr/lib/llvm-22/bin/clang-format
-          -S ${{ github.workspace }}
 
       - name: Check formatting
-        run: cmake --build ${{ github.workspace }}/build-lint --target format-check
+        run: cmake --build --preset debug --target format-check
 
       - name: Build with clang-tidy
-        run: cmake --build ${{ github.workspace }}/build-lint --config Debug
+        run: cmake --build --preset debug --config Debug
