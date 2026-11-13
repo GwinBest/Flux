@@ -11,7 +11,6 @@ namespace Flux
     IoContextPool::IoContextPool(const std::size_t threadCount)
         : _strand(boost::asio::make_strand(_ioContext))
         , _workGuard(boost::asio::make_work_guard(_ioContext))
-        , _threads(std::thread::hardware_concurrency())
         , _threadCount(std::max<std::size_t>(1, threadCount))
         , _status(Status::Started)
     {
@@ -34,7 +33,7 @@ namespace Flux
         }
         catch (...)
         {
-            std::fputs("Failed to shut down io_context pool during destruction\n", stderr);
+            ErrorLog("Failed to shut down io_context pool during destruction");
             std::terminate();
         }
     }
