@@ -20,6 +20,20 @@ option(ENABLE_CLANG_TIDY "Enable clang-tidy checks for project targets" ON)
 option(ENABLE_CLANG_FORMAT "Enable clang-format helper targets" ON)
 option(ENABLE_LINT_STRICT "Fail configuration when enabled lint tools are missing" OFF)
 
+if (WIN32)
+    add_compile_definitions(_WIN32_WINNT=0x0601)
+
+    if (MSVC AND ENABLE_ASAN)
+        # Keep MSVC STL annotations consistent with third-party libraries that
+        # are not built with AddressSanitizer.
+        add_compile_definitions(
+                _DISABLE_VECTOR_ANNOTATION
+                _DISABLE_STRING_ANNOTATION
+                _DISABLE_OPTIONAL_ANNOTATION
+        )
+    endif ()
+endif ()
+
 set(CLANG_TIDY_CONFIG_FILE "${CMAKE_SOURCE_DIR}/.clang-tidy" CACHE FILEPATH
         "Path to clang-tidy configuration file."
 )

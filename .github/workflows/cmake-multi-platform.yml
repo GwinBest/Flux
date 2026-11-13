@@ -140,7 +140,7 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.build_type }} --config ${{ matrix.build_type }} --parallel 2
       - name: Test
-        run: ctest --preset ${{ matrix.build_type }} --no-tests=error
+        run: ctest --preset ${{ matrix.build_type }} --build-config ${{ matrix.build_type == 'debug' && 'Debug' || 'Release' }} --no-tests=error
 
   build-linux-extra:
     name: Linux ${{ matrix.variant }} (${{ matrix.build_type }})
@@ -259,8 +259,7 @@ jobs:
       - name: Configure CMake (strict lint mode)
         run: >
           cmake --preset debug
-          -DCMAKE_C_COMPILER=clang
-          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_COMPILER=/usr/lib/llvm-22/bin/clang++
           -DBUILD_TEST=ON
           -DENABLE_ASAN=OFF
           -DENABLE_UBSAN=OFF
