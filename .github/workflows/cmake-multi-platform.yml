@@ -73,6 +73,7 @@ jobs:
           -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
           -DBUILD_TEST=ON
           -DBUILD_DEMO=OFF
+          -DENABLE_CLANG_TIDY=OFF
 
       - name: Build
         run: >

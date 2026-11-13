@@ -76,8 +76,8 @@ namespace Flux::Test
             ++factoryCalls;
             return std::make_unique<TestProtocolSession>();
         };
-        const ConnectionManager manager(1, ConnectionOptions(), sessionFactory);
         boost::asio::io_context context;
+        const ConnectionManager manager(1, ConnectionOptions(), sessionFactory);
 
         const auto connection = manager.CreateConnection(boost::asio::ip::tcp::socket(context));
 
@@ -149,8 +149,8 @@ namespace Flux::Test
             .MaxRequestSize = maximum,
             .MaxSendQueue = maximum,
         };
-        const ConnectionManager manager(1, options);
         boost::asio::io_context context;
+        const ConnectionManager manager(1, options);
         const auto connection = manager.CreateConnection(boost::asio::ip::tcp::socket(context));
 
         ASSERT_TRUE(connection.has_value());
@@ -170,8 +170,8 @@ namespace Flux::Test
                 .MaxRequestSize = limit,
                 .MaxSendQueue = limit,
             };
-            const ConnectionManager manager(1, options);
             boost::asio::io_context context;
+            const ConnectionManager manager(1, options);
             const auto connection = manager.CreateConnection(boost::asio::ip::tcp::socket(context));
 
             ASSERT_TRUE(connection.has_value());
