@@ -283,7 +283,7 @@ namespace Flux::Test
             const ServerOptions options {
                 .BindEndpoint = LoopbackEndpoint(),
                 .MaxConnections = std::nullopt,
-                .ConnectionOptions = {.IdleTimeout = timeout},
+                .ConnectionConfig = {.IdleTimeout = timeout},
             };
 
             EXPECT_THROW(Server {options}, std::invalid_argument);
@@ -296,7 +296,7 @@ namespace Flux::Test
             .ThreadCount = 3,
             .BindEndpoint = LoopbackEndpoint(),
             .MaxConnections = 42,
-            .ConnectionOptions =
+            .ConnectionConfig =
                 {
                                     .IdleTimeout = std::chrono::seconds(9),
                                     .MaxRequestSize = 2048,
@@ -310,9 +310,9 @@ namespace Flux::Test
         EXPECT_EQ(server.GetOptions().BindEndpoint, options.BindEndpoint);
         EXPECT_EQ(server.GetOptions().MaxConnections, 42U);
         EXPECT_LE(server.GetMaxConnections(), 42U);
-        EXPECT_EQ(server.GetOptions().ConnectionOptions.IdleTimeout, std::chrono::seconds(9));
-        EXPECT_EQ(server.GetOptions().ConnectionOptions.MaxRequestSize, 2048U);
-        EXPECT_EQ(server.GetOptions().ConnectionOptions.MaxSendQueue, 4096U);
+        EXPECT_EQ(server.GetOptions().ConnectionConfig.IdleTimeout, std::chrono::seconds(9));
+        EXPECT_EQ(server.GetOptions().ConnectionConfig.MaxRequestSize, 2048U);
+        EXPECT_EQ(server.GetOptions().ConnectionConfig.MaxSendQueue, 4096U);
     }
 
     TEST(ServerConstructorTest, DefaultsToCalculatedConnectionCapacity)
@@ -368,14 +368,14 @@ namespace Flux::Test
                         .ThreadCount = 1,
                         .BindEndpoint = LoopbackEndpoint(),
                         .MaxConnections = 1,
-                        .ConnectionOptions =
+                        .ConnectionConfig =
                             {
                                                 .IdleTimeout = timeout,
                                                 .MaxRequestSize = requestLimit,
                                                 .MaxSendQueue = sendLimit,
                                                 },
                     });
-                    const auto& actual = server.GetOptions().ConnectionOptions;
+                    const auto& actual = server.GetOptions().ConnectionConfig;
                     EXPECT_EQ(actual.IdleTimeout, timeout);
                     EXPECT_EQ(actual.MaxRequestSize, requestLimit);
                     EXPECT_EQ(actual.MaxSendQueue, sendLimit);

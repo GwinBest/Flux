@@ -24,9 +24,9 @@ namespace Flux
         std::size_t ThreadCount = std::thread::hardware_concurrency();
         Endpoint BindEndpoint;
         std::optional<std::size_t> MaxConnections;
-        ConnectionOptions ConnectionOptions {};
+        ConnectionOptions ConnectionConfig {};
 
-        SessionFactory SessionFactory = [] -> std::unique_ptr<IProtocolSession> {
+        SessionFactory Session = [] -> std::unique_ptr<IProtocolSession> {
             return std::make_unique<HttpSession>();
         };
     };

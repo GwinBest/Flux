@@ -18,7 +18,7 @@ namespace Flux
     {
         auto GetValidatedThreadCount(const ServerOptions& options) -> std::size_t
         {
-            if (options.ConnectionOptions.IdleTimeout <= std::chrono::seconds::zero())
+            if (options.ConnectionConfig.IdleTimeout <= std::chrono::seconds::zero())
                 throw std::invalid_argument("IdleTimeout must be greater than zero");
             if (!options.SessionFactory)
                 throw std::invalid_argument("SessionFactory must not be empty");
@@ -37,7 +37,7 @@ namespace Flux
         auto acceptorResult = Acceptor::CreateAcceptor(_ioContextPool.GetStrand(),
                                                        options.BindEndpoint,
                                                        options.MaxConnections,
-                                                       options.ConnectionOptions,
+                                                       options.ConnectionConfig,
                                                        options.SessionFactory);
         if (!acceptorResult)
             throw boost::system::system_error(acceptorResult.error(),

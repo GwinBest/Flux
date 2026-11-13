@@ -74,7 +74,7 @@ namespace Flux::Test
 
     TEST(IoContextPoolConstructorTest, RejectsUnrepresentableThreadCount)
     {
-        EXPECT_THROW(IoContextPool(std::numeric_limits<std::size_t>::max()), std::exception);
+        EXPECT_THROW(IoContextPool {std::numeric_limits<std::size_t>::max()};, std::exception);
     }
 
     TEST(IoContextPoolRunTest, StartsWorkerThreadsAndExecutesPostedWork)
