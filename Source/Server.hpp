@@ -34,7 +34,7 @@ namespace Flux
     class Server final
     {
     public:
-        explicit Server(const ServerOptions& options);
+        explicit Server(const ServerOptions& options = ServerOptions());
         Server(const std::size_t threadCount, const Endpoint& endpoint);
 
         Server(const Server&) = delete;
