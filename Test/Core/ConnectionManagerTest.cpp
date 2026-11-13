@@ -1,4 +1,5 @@
 #include "Core/ConnectionManager.hpp"
+
 #include "gtest/gtest.h"
 
 #include <algorithm>
@@ -13,11 +14,14 @@
 #include <boost/system/system_error.hpp>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <limits>
 #include <memory>
 #include <new>
+#include <span>
+#include <stdexcept>
 #include <system_error>
 #include <thread>
 #include <type_traits>
@@ -33,6 +37,12 @@ namespace Flux::Test
 {
     namespace
     {
+        class TestProtocolSession final : public IProtocolSession
+        {
+        public:
+            auto OnBytes(std::span<const std::byte> /*bytes*/) -> bool override { return true; }
+        };
+
         auto ExpectPeerClosed(boost::asio::io_context& context, boost::asio::ip::tcp::socket& peer)
             -> void
         {
@@ -59,24 +69,174 @@ namespace Flux::Test
     static_assert(!std::is_copy_assignable_v<ConnectionManager>);
     static_assert(!std::is_move_assignable_v<ConnectionManager>);
 
+    TEST(ConnectionManagerTest, CreatesProtocolSessionUsingInjectedFactory)
+    {
+        std::size_t factoryCalls = 0;
+        const SessionFactory sessionFactory = [&] -> std::unique_ptr<IProtocolSession> {
+            ++factoryCalls;
+            return std::make_unique<TestProtocolSession>();
+        };
+        boost::asio::io_context context;
+        const ConnectionManager manager(1, ConnectionOptions(), sessionFactory);
+
+        const auto connection = manager.CreateConnection(boost::asio::ip::tcp::socket(context));
+
+        ASSERT_TRUE(connection.has_value());
+        EXPECT_EQ(factoryCalls, 1U);
+    }
+
     TEST(ConnectionManagerTest, ConnectionFactoryPreservesDefaultAndCustomIdleTimeouts)
     {
         using namespace std::chrono_literals;
         boost::asio::io_context context;
-        const ConnectionManager manager(2);
+        const ConnectionManager manager(3);
         const auto defaultConnection = manager.CreateConnection(
             boost::asio::ip::tcp::socket(context));
         const auto customConnection = manager.CreateConnection(
             boost::asio::ip::tcp::socket(context),
             7s);
+        const auto boundaryConnection = manager.CreateConnection(
+            boost::asio::ip::tcp::socket(context),
+            1s);
         ASSERT_TRUE(defaultConnection.has_value());
         ASSERT_TRUE(customConnection.has_value());
+        ASSERT_TRUE(boundaryConnection.has_value());
         EXPECT_EQ(Connection::IdleTimeoutDuration, 120s);
         EXPECT_EQ((*defaultConnection)->GetIdleTimeout(), 120s);
         EXPECT_EQ((*customConnection)->GetIdleTimeout(), 7s);
-        customConnection.value()->SetIdleTimeout(9s);
+        EXPECT_EQ((*boundaryConnection)->GetIdleTimeout(), 1s);
+        ASSERT_TRUE(customConnection.value()->SetIdleTimeout(9s).has_value());
         EXPECT_EQ((*customConnection)->GetIdleTimeout(), 9s);
         EXPECT_EQ((*defaultConnection)->GetIdleTimeout(), 120s);
+    }
+
+    TEST(ConnectionManagerTest, AppliesConfiguredConnectionOptionsToNewConnections)
+    {
+        using namespace std::chrono_literals;
+        boost::asio::io_context context;
+        constexpr ConnectionOptions options {
+            .IdleTimeout = 7s,
+            .MaxRequestSize = 1234,
+            .MaxSendQueue = 5678,
+        };
+        const ConnectionManager manager(1, options);
+
+        const auto connection = manager.CreateConnection(boost::asio::ip::tcp::socket(context));
+
+        ASSERT_TRUE(connection.has_value());
+        EXPECT_EQ((*connection)->GetIdleTimeout(), 7s);
+        EXPECT_EQ((*connection)->GetMaxRequestSize(), 1234U);
+        EXPECT_EQ((*connection)->GetMaxSendQueue(), 5678U);
+    }
+
+    TEST(ConnectionManagerTest, RejectsNonPositiveIdleTimeoutOptions)
+    {
+        using namespace std::chrono_literals;
+        const boost::asio::io_context context;
+
+        for (const auto timeout : {std::chrono::seconds::min(), 0s, -1s})
+        {
+            const ConnectionOptions options {.IdleTimeout = timeout};
+            EXPECT_THROW(ConnectionManager(1, options), std::invalid_argument);
+        }
+    }
+
+    TEST(ConnectionManagerTest, PreservesMaximumConnectionOptionValues)
+    {
+        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+        constexpr ConnectionOptions options {
+            .IdleTimeout = std::chrono::seconds::max(),
+            .MaxRequestSize = maximum,
+            .MaxSendQueue = maximum,
+        };
+        boost::asio::io_context context;
+        const ConnectionManager manager(1, options);
+        const auto connection = manager.CreateConnection(boost::asio::ip::tcp::socket(context));
+
+        ASSERT_TRUE(connection.has_value());
+        EXPECT_EQ((*connection)->GetIdleTimeout(), std::chrono::seconds::max());
+        EXPECT_EQ((*connection)->GetMaxRequestSize(), maximum);
+        EXPECT_EQ((*connection)->GetMaxSendQueue(), maximum);
+    }
+
+    TEST(ConnectionManagerTest, PreservesConnectionOptionBoundaries)
+    {
+        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+        for (const auto limit : {std::size_t {0}, std::size_t {1}, maximum})
+        {
+            SCOPED_TRACE(limit);
+            const ConnectionOptions options {
+                .IdleTimeout = std::chrono::seconds {1},
+                .MaxRequestSize = limit,
+                .MaxSendQueue = limit,
+            };
+            boost::asio::io_context context;
+            const ConnectionManager manager(1, options);
+            const auto connection = manager.CreateConnection(boost::asio::ip::tcp::socket(context));
+
+            ASSERT_TRUE(connection.has_value());
+            EXPECT_EQ((*connection)->GetMaxRequestSize(), limit);
+            EXPECT_EQ((*connection)->GetMaxSendQueue(), limit);
+        }
+    }
+
+    TEST(ConnectionManagerTest, RejectsNonPositivePerConnectionIdleTimeout)
+    {
+        using namespace std::chrono_literals;
+        boost::asio::io_context context;
+        const ConnectionManager manager(1);
+
+        for (const auto timeout : {0s, -1s})
+        {
+            const auto result = manager.CreateConnection(boost::asio::ip::tcp::socket(context),
+                                                         timeout);
+            ASSERT_FALSE(result.has_value());
+            EXPECT_EQ(result.error(), boost::asio::error::invalid_argument);
+        }
+
+        EXPECT_TRUE(manager.CreateConnection(boost::asio::ip::tcp::socket(context)).has_value());
+    }
+
+    TEST(ConnectionManagerTest, StartFactoryRejectsNonPositiveTimeoutWithoutConsumingCapacity)
+    {
+        using namespace std::chrono_literals;
+        using Tcp = boost::asio::ip::tcp;
+        boost::asio::io_context context;
+
+        for (const auto timeout : {std::chrono::seconds::min(), -1s, 0s})
+        {
+            SCOPED_TRACE(timeout.count());
+            const ConnectionManager manager(1);
+            const auto result = manager.CreateAndStartConnection(Tcp::socket(context), timeout);
+            ASSERT_FALSE(result.has_value());
+            EXPECT_EQ(result.error(), boost::asio::error::invalid_argument);
+            const auto available = manager.CreateConnection(Tcp::socket(context));
+            ASSERT_TRUE(available.has_value());
+        }
+    }
+
+    TEST(ConnectionManagerTest, StartFactoryAcceptsMinimumAndMaximumPositiveTimeouts)
+    {
+        using Tcp = boost::asio::ip::tcp;
+        const auto maximumTimeout = std::chrono::seconds::max();
+
+        for (const auto timeout : {std::chrono::seconds {1}, maximumTimeout})
+        {
+            SCOPED_TRACE(timeout.count());
+            boost::asio::io_context context;
+            Tcp::acceptor listener(context, {boost::asio::ip::address_v4::loopback(), 0});
+            Tcp::socket peer(context);
+            peer.connect(listener.local_endpoint());
+            const ConnectionManager manager(1);
+
+            const auto connection = OnExecutor(context, context.get_executor(), [&] -> auto {
+                return manager.CreateAndStartConnection(listener.accept(), timeout);
+            });
+
+            ASSERT_TRUE(connection.has_value());
+            EXPECT_EQ((*connection)->GetIdleTimeout(), timeout);
+            EXPECT_TRUE(AwaitFuture(context, (*connection)->AsyncClose()).has_value());
+        }
     }
 
     TEST(ConnectionManagerTest, StartFactoryUsesDefaultIdleTimeout)
@@ -171,12 +331,49 @@ namespace Flux::Test
                   80U);
         EXPECT_EQ(ConnectionManager::CalculateMaxConnections({264, 50 * memoryPerConnection}), 40U);
 
-        const ConnectionLimitOptions options {
+        constexpr ConnectionLimitOptions options {
             .MemoryPerConnectionBytes = 10,
             .ReservedFileDescriptors = 2,
             .SafetyFactor = 0.5,
         };
         EXPECT_EQ(ConnectionManager::CalculateMaxConnections({9, 79}, options), 3U);
+    }
+
+    TEST(ConnectionManagerTest, ExplicitConnectionLimitCapsCalculatedCapacity)
+    {
+        constexpr ConnectionLimitOptions options {
+            .MemoryPerConnectionBytes = 10,
+            .ReservedFileDescriptors = 2,
+            .SafetyFactor = 0.5,
+        };
+        constexpr SystemResources resources {
+            .FileDescriptorLimit = 100,
+            .AvailableMemoryBytes = 1000,
+        };
+
+        EXPECT_EQ(ConnectionManager::CalculateMaxConnections(resources, options, 17U), 17U);
+        EXPECT_EQ(ConnectionManager::CalculateMaxConnections(resources, options, 1000U), 49U);
+    }
+
+    TEST(ConnectionManagerTest, ExplicitConnectionLimitHonorsZeroOneAndMaximum)
+    {
+        constexpr ConnectionLimitOptions options {
+            .MemoryPerConnectionBytes = 10,
+            .ReservedFileDescriptors = 2,
+            .SafetyFactor = 0.5,
+        };
+        constexpr SystemResources resources {
+            .FileDescriptorLimit = 100,
+            .AvailableMemoryBytes = 1000,
+        };
+
+        EXPECT_EQ(ConnectionManager::CalculateMaxConnections(resources, options, 0U), 0U);
+        EXPECT_EQ(ConnectionManager::CalculateMaxConnections(resources, options, 1U), 1U);
+        EXPECT_EQ(
+            ConnectionManager::CalculateMaxConnections(resources,
+                                                       options,
+                                                       std::numeric_limits<std::size_t>::max()),
+            49U);
     }
 
     TEST(ConnectionManagerTest, ExhaustedResourceBudgetsProduceZeroCapacity)
@@ -237,11 +434,17 @@ namespace Flux::Test
         constexpr auto exactBudget = resourceLimit - 2047;
         EXPECT_EQ(ConnectionManager::CalculateMaxConnections({exactBudget, exactBudget}, options),
                   std::min<std::uint64_t>(capacityLimit, exactBudget / 2));
+
+        options.MemoryPerConnectionBytes = resourceLimit;
+        options.SafetyFactor = 1.0;
+        EXPECT_EQ(
+            ConnectionManager::CalculateMaxConnections({resourceLimit, resourceLimit}, options),
+            1U);
     }
 
     TEST(ConnectionManagerTest, RoundsDownMemoryBudgetBeforeApplyingSafetyFactor)
     {
-        const ConnectionLimitOptions options {
+        constexpr ConnectionLimitOptions options {
             .MemoryPerConnectionBytes = 10,
             .ReservedFileDescriptors = 0,
             .SafetyFactor = 0.75,
@@ -278,7 +481,7 @@ namespace Flux::Test
     TEST(ConnectionManagerTest, FullDescriptorReservationDoesNotUnderflow)
     {
         constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
-        const ConnectionLimitOptions options {
+        constexpr ConnectionLimitOptions options {
             .MemoryPerConnectionBytes = 1,
             .ReservedFileDescriptors = maximum,
             .SafetyFactor = 1.0,
@@ -303,7 +506,7 @@ namespace Flux::Test
 
     TEST(ConnectionManagerTest, OptionsConstructorAppliesDescriptorReservation)
     {
-        const ConnectionLimitOptions options {
+        constexpr ConnectionLimitOptions options {
             .ReservedFileDescriptors = std::numeric_limits<std::uint64_t>::max(),
         };
         const ConnectionManager manager(options);
@@ -312,6 +515,25 @@ namespace Flux::Test
         const auto result = manager.CreateConnection(boost::asio::ip::tcp::socket(context));
         ASSERT_FALSE(result.has_value());
         EXPECT_EQ(result.error(), MakeErrorCode(Error::ConnectionLimitReached));
+    }
+
+    TEST(ConnectionManagerTest, ResourceAwareConstructorsHonorExplicitZeroCapacity)
+    {
+        constexpr ConnectionLimitOptions limits {
+            .MemoryPerConnectionBytes = 1,
+            .ReservedFileDescriptors = 0,
+            .SafetyFactor = 1.0,
+        };
+        constexpr ConnectionOptions connectionOptions {
+            .IdleTimeout = std::chrono::seconds {1},
+            .MaxRequestSize = 1,
+            .MaxSendQueue = 1,
+        };
+        const ConnectionManager withBothOptions(limits, connectionOptions, 0U);
+        const ConnectionManager withConnectionOptions(connectionOptions, 0U);
+
+        EXPECT_EQ(withBothOptions.GetMaxConnections(), 0U);
+        EXPECT_EQ(withConnectionOptions.GetMaxConnections(), 0U);
     }
 
     TEST(ConnectionManagerTest, InvalidOptionsConstructorPreservesExpectedError)
@@ -499,8 +721,8 @@ namespace Flux::Test
                 for (std::size_t index = 0; index < attemptsPerWorker; ++index)
                 {
                     const auto slot = (worker * attemptsPerWorker) + index;
-                    auto result = manager.CreateConnection(boost::asio::ip::tcp::socket(context));
-                    if (result)
+                    if (auto result = manager.CreateConnection(
+                            boost::asio::ip::tcp::socket(context)))
                     {
                         connections.at(slot) = std::move(*result);
                     }

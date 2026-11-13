@@ -4,21 +4,41 @@
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/system/system_error.hpp>
+#include <chrono>
 #include <csignal>
 #include <future>
+#include <stdexcept>
 #include <utility>
 
 #include "Utils/Log.hpp"
 
 namespace Flux
 {
-    Server::Server(const std::size_t threadCount, const Endpoint& endpoint)
-        : _ioContextPool(std::max<std::size_t>(1, threadCount))
-        , _threadCount(std::max<std::size_t>(1, threadCount))
+    namespace
+    {
+        auto GetValidatedThreadCount(const ServerOptions& options) -> std::size_t
+        {
+            if (options.ConnectionConfig.IdleTimeout <= std::chrono::seconds::zero())
+                throw std::invalid_argument("IdleTimeout must be greater than zero");
+            if (!options.Session)
+                throw std::invalid_argument("SessionFactory must not be empty");
+
+            return std::max<std::size_t>(1, options.ThreadCount);
+        }
+    }   // namespace
+
+    Server::Server(const ServerOptions& options)
+        : _ioContextPool(GetValidatedThreadCount(options))
+        , _options(options)
+        , _threadCount(GetValidatedThreadCount(options))
         , _signalSet(_ioContextPool.GetStrand(), SIGINT, SIGTERM)
         , _status(Status::Initialized)
     {
-        auto acceptorResult = Acceptor::CreateAcceptor(_ioContextPool.GetStrand(), endpoint);
+        auto acceptorResult = Acceptor::CreateAcceptor(_ioContextPool.GetStrand(),
+                                                       options.BindEndpoint,
+                                                       options.MaxConnections,
+                                                       options.ConnectionConfig,
+                                                       options.Session);
         if (!acceptorResult)
             throw boost::system::system_error(acceptorResult.error(),
                                               "Failed to create server acceptor");
@@ -48,6 +68,14 @@ namespace Flux
             InfoLog("Shutdown requested by signal={}", signalNumber);
         });
     }
+
+    Server::Server(const std::size_t threadCount, const Endpoint& endpoint)
+        : Server(ServerOptions {
+              .ThreadCount = threadCount,
+              .BindEndpoint = endpoint,
+              .MaxConnections = std::nullopt,
+          })
+    {}
 
     Server::~Server()
     {

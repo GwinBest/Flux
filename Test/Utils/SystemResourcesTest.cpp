@@ -1,4 +1,5 @@
 #include "Utils/SystemResources.hpp"
+
 #include "gtest/gtest.h"
 
 #include <cstdint>

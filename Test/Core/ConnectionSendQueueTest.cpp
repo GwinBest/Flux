@@ -383,7 +383,7 @@ namespace Flux::Test
         for (unsigned char round = 1; round <= 4; ++round)
         {
             SCOPED_TRACE(round);
-            const std::vector<std::byte> payload(limit, static_cast<std::byte>(round));
+            const std::vector payload(limit, static_cast<std::byte>(round));
             ASSERT_NO_FATAL_FAILURE(SendAfterDrain(payload));
             ASSERT_NO_FATAL_FAILURE(ExpectReceived(payload));
         }
@@ -392,9 +392,11 @@ namespace Flux::Test
     TEST_F(ConnectionSendQueueCompletionTest,
            CompletedMessageReleasesCapacityBeforeNextWriteCompletes)
     {
-        const std::vector<std::byte> first(1, std::byte {1});
-        const std::vector<std::byte> large(65537, std::byte {2});
-        const std::vector<std::byte> tail(first.size(), std::byte {3});
+        constexpr auto firstValue = 1;
+        constexpr auto largeValue = 65537;
+        const std::vector first(firstValue, std::byte {1});
+        const std::vector large(largeValue, std::byte {2});
+        const std::vector tail(first.size(), std::byte {3});
         bool observedCompletion = false;
         _connection->SetMaxSendQueue(first.size() + large.size());
         ASSERT_NO_FATAL_FAILURE(Start());

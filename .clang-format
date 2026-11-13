@@ -129,7 +129,6 @@ RemoveBracesLLVM: false
 IncludeCategories:
   - Regex: ^<.*>
   - Regex: ^"[^"]*\.hpp"
-  - Regex: ^\s*<.*>
   - Regex: ^"[^"]*"
 AlignConsecutiveBitFields:
   Enabled: true

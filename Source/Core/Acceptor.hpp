@@ -7,6 +7,7 @@
 #include <expected>
 #include <future>
 #include <memory>
+#include <optional>
 
 #include "ConnectionManager.hpp"
 #include "Core/IoContextPool.hpp"
@@ -25,11 +26,19 @@ namespace Flux
         ~Acceptor() = default;
 
         static auto CreateAcceptor(const IoContextPool::Strand& strand,
-                                   const boost::asio::ip::tcp::endpoint& endpoint)
+                                   const boost::asio::ip::tcp::endpoint& endpoint,
+                                   std::optional<std::size_t> maxConnections = std::nullopt,
+                                   const ConnectionOptions& connectionOptions = {},
+                                   SessionFactory sessionFactory = {})
             -> std::expected<std::shared_ptr<Acceptor>, ErrorCode>;
 
         auto AsyncStartAccepting() -> std::future<Result>;
         auto AsyncStopAccepting() -> std::future<Result>;
+
+        [[nodiscard]] auto GetMaxConnections() const noexcept -> std::size_t
+        {
+            return _connectionManager.GetMaxConnections();
+        }
 
     private:
         enum class Status : std::uint8_t
@@ -41,7 +50,10 @@ namespace Flux
         };
 
     private:
-        explicit Acceptor(IoContextPool::Strand strand);
+        Acceptor(IoContextPool::Strand strand,
+                 std::optional<std::size_t> maxConnections,
+                 const ConnectionOptions& connectionOptions,
+                 SessionFactory sessionFactory);
 
         auto Open(const boost::asio::ip::tcp::endpoint& endpoint) -> Result;
 

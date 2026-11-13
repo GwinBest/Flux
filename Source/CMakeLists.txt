@@ -1,12 +1,13 @@
-find_package(Boost CONFIG QUIET COMPONENTS asio)
+find_package(Boost CONFIG QUIET COMPONENTS asio beast)
 find_package(spdlog CONFIG QUIET)
 
 if (Boost_FOUND)
     set(BOOST_ASIO_TARGET Boost::asio)
+    set(BOOST_BEAST_TARGET Boost::beast)
 else ()
     include(FetchContent)
 
-    set(BOOST_INCLUDE_LIBRARIES asio)
+    set(BOOST_INCLUDE_LIBRARIES asio beast)
     FetchContent_Declare(Boost
             URL https://github.com/boostorg/boost/releases/download/boost-1.92.0/boost-1.92.0-cmake.tar.xz
             URL_HASH SHA256=9BED76128D4E46755DBE818487788C6FCEB6F72B378F4DAA49B7E1E600D9088D
@@ -15,6 +16,7 @@ else ()
     )
     FetchContent_MakeAvailable(Boost)
     set(BOOST_ASIO_TARGET boost_asio)
+    set(BOOST_BEAST_TARGET Boost::beast)
 endif ()
 
 if (spdlog_FOUND)
@@ -44,7 +46,7 @@ if (MINGW)
 endif ()
 
 target_link_libraries(${PROJECT_NAME}
-        PUBLIC ${BOOST_ASIO_TARGET}
+        PUBLIC ${BOOST_ASIO_TARGET} ${BOOST_BEAST_TARGET}
         PRIVATE ${SPDLOG_TARGET}
 )
 
@@ -56,7 +58,7 @@ if (ENABLE_CLANG_TIDY AND PROJECT_CXX_CLANG_TIDY)
     set_target_properties(${PROJECT_NAME} PROPERTIES CXX_CLANG_TIDY "${PROJECT_CXX_CLANG_TIDY}")
 endif ()
 
-enable_asan(${PROJECT_NAME})
+enable_sanitizers(${PROJECT_NAME})
 enable_coverage(${PROJECT_NAME})
 enable_project_warnings(${PROJECT_NAME})
 

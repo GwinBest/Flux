@@ -1,4 +1,5 @@
 #include "Core/Connection.hpp"
+
 #include "gtest/gtest.h"
 
 #include <array>
@@ -9,11 +10,15 @@
 #include <boost/asio/write.hpp>
 #include <chrono>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <numeric>
+#include <span>
+#include <string>
 #include <vector>
 
 #include "../Support/Async.hpp"
+#include "../Support/Http.hpp"
 #include "Core/ConnectionManager.hpp"
 
 namespace Flux::Test
@@ -70,6 +75,19 @@ namespace Flux::Test
             const auto result = AwaitFuture(_context, _connection->Send(std::move(data)));
             ASSERT_FALSE(result.has_value());
             EXPECT_EQ(result.error(), MakeErrorCode(Error::ConnectionNotStarted));
+        }
+    }
+
+    TEST_F(ConnectionTest, ConfigurationAccessorsPreserveZeroOneAndMaximumValues)
+    {
+        for (constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+             const auto value : {std::size_t {0}, std::size_t {1}, maximum})
+        {
+            SCOPED_TRACE(value);
+            _connection->SetMaxRequestSize(value);
+            _connection->SetMaxSendQueue(value);
+            EXPECT_EQ(_connection->GetMaxRequestSize(), value);
+            EXPECT_EQ(_connection->GetMaxSendQueue(), value);
         }
     }
 
@@ -174,7 +192,8 @@ namespace Flux::Test
         constexpr auto payloadSize = static_cast<std::size_t>(128 * 1024);
         _connection->SetMaxRequestSize(payloadSize);
         Start();
-        const std::vector<std::byte> data(payloadSize, std::byte {42});
+        const auto request = MakeHttpPostRequestWithSize(payloadSize);
+        const auto data = std::as_bytes(std::span(request.data(), request.size()));
         auto write = boost::asio::async_write(_peer,
                                               boost::asio::buffer(data),
                                               boost::asio::use_future);
@@ -187,6 +206,46 @@ namespace Flux::Test
         const auto replacement = _manager.CreateConnection(Tcp::socket(_strand));
         ASSERT_TRUE(replacement.has_value());
         EXPECT_TRUE(AwaitFuture(_context, (*replacement)->AsyncClose()).has_value());
+    }
+
+    TEST_F(ConnectionTest, AcceptsPipelinedHttpRequestsAndKeepsConnectionUsable)
+    {
+        Start();
+        const std::string requests = "GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n"
+                                     "GET /second HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        auto write = boost::asio::async_write(_peer,
+                                              boost::asio::buffer(requests),
+                                              boost::asio::use_future);
+        ASSERT_EQ(AwaitFuture(_context, std::move(write)), requests.size());
+        boost::asio::steady_timer settle(_context, 20ms);
+        AwaitFuture(_context, settle.async_wait(boost::asio::use_future));
+
+        constexpr std::array response {std::byte {'o'}, std::byte {'k'}};
+        const std::vector<std::byte> expected(response.begin(), response.end());
+        std::array<std::byte, response.size()> received {};
+        auto read = boost::asio::async_read(_peer,
+                                            boost::asio::buffer(received),
+                                            boost::asio::use_future);
+
+        ASSERT_TRUE(AwaitFuture(_context, _connection->Send(std::vector(expected))).has_value());
+        EXPECT_EQ(AwaitFuture(_context, std::move(read)), response.size());
+        EXPECT_EQ(std::vector(received.begin(), received.end()), expected);
+    }
+
+    TEST_F(ConnectionTest, MalformedHttpRequestClosesConnection)
+    {
+        Start();
+        const std::string request = "G?T / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        auto write = boost::asio::async_write(_peer,
+                                              boost::asio::buffer(request),
+                                              boost::asio::use_future);
+        ASSERT_EQ(AwaitFuture(_context, std::move(write)), request.size());
+        boost::asio::steady_timer settle(_context, 20ms);
+        AwaitFuture(_context, settle.async_wait(boost::asio::use_future));
+
+        const auto sendResult = AwaitFuture(_context, _connection->Send({}));
+        ASSERT_FALSE(sendResult.has_value());
+        EXPECT_EQ(sendResult.error(), MakeErrorCode(Error::ConnectionClosed));
     }
 
     TEST_F(ConnectionTest, PeerResetClosesAndReleasesConnection)

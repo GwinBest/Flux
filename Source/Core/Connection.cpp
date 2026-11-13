@@ -60,13 +60,17 @@ namespace Flux
         return _maxSendQueue.load();
     }
 
-    auto Connection::SetIdleTimeout(const std::chrono::seconds idleTimeout) -> void
+    auto Connection::SetIdleTimeout(const std::chrono::seconds idleTimeout) -> Result
     {
+        if (idleTimeout <= std::chrono::seconds::zero())
+            return std::unexpected(boost::asio::error::invalid_argument);
+
         _idleTimeout.store(idleTimeout);
         boost::asio::dispatch(_socket.get_executor(), [self = shared_from_this()] -> void {
             if (self->_status == Status::Started)
                 self->RestartIdleTimer();
         });
+        return {};
     }
 
     auto Connection::GetIdleTimeout() const -> std::chrono::seconds
@@ -76,14 +80,16 @@ namespace Flux
 
     Connection::Connection(boost::asio::ip::tcp::socket&& socket,
                            std::function<void(const std::shared_ptr<Connection>&)>&& onClose,
-                           const std::chrono::seconds idleTimeout)
+                           std::unique_ptr<IProtocolSession> protocol,
+                           const ConnectionOptions& options)
         : _socket(std::move(socket))
         , _readBuffer()
-        , _maxRequestSize(DefaultMaxRequestSize)
-        , _maxSendQueue(DefaultMaxRequestSize)
+        , _maxRequestSize(options.MaxRequestSize)
+        , _maxSendQueue(options.MaxSendQueue)
         , _onClose(std::move(onClose))
-        , _idleTimeout(idleTimeout)
+        , _idleTimeout(options.IdleTimeout)
         , _idleTimer(_socket.get_executor())
+        , _protocol(std::move(protocol))
     {}
 
     auto Connection::QueueSend(std::vector<std::byte>&& data) -> Result
@@ -141,8 +147,6 @@ namespace Flux
 
         _status = Status::Started;
 
-        _incomingBuffer.clear();
-
         RestartIdleTimer();
 
         const auto result = DoRead();
@@ -169,7 +173,6 @@ namespace Flux
 
         _idleTimer.cancel();
 
-        _incomingBuffer.clear();
         _sendQueue.clear();
         _pendingSendBytes = 0;
         _writeOffset = 0;
@@ -192,61 +195,69 @@ namespace Flux
         if (_status != Status::Started)
             return std::unexpected(MakeErrorCode(Error::ConnectionNotStarted));
 
-        _socket.async_read_some(
-            boost::asio::buffer(_readBuffer),
-            [self = shared_from_this()](const ErrorCode& errorCode,
-                                        const std::size_t length) -> void {
-                if (self->_status != Status::Started)
-                    return;
-
-                if (errorCode)
-                {
-                    WarnLog("Connection async read failed: {}", errorCode.message());
-                    if (const auto closeResult = self->Close(); !closeResult)
-                    {
-                        ErrorLog("Failed to close connection after async read failure: {}",
-                                 closeResult.error().message());
-                    }
-                    return;
-                }
-
-                if (const auto limit = self->GetMaxRequestSize();
-                    self->_incomingBuffer.size() + length > limit)
-                {
-                    ErrorLog("Max request size exceeded! Current: {}, Limit: {}",
-                             self->_incomingBuffer.size() + length,
-                             limit);
-
-                    if (const auto closeResult = self->Close(); !closeResult)
-                    {
-                        ErrorLog("Failed to close connection after request size limit exceeded: {}",
-                                 closeResult.error().message());
-                    }
-                    return;
-                    // TODO: return http 413
-                }
-
-                const auto received = std::span(self->_readBuffer).first(length);
-                self->_incomingBuffer.insert(self->_incomingBuffer.end(),
-                                             received.begin(),
-                                             received.end());
-
-                self->RestartIdleTimer();
-
-                // TODO: handle packet and remove packet from incoming buffer
-
-                if (const auto result = self->DoRead(); !result)
-                {
-                    ErrorLog("Failed to restart connection read: {}", result.error().message());
-                    if (const auto closeResult = self->Close(); !closeResult)
-                    {
-                        ErrorLog("Failed to close connection after read restart failure: {}",
-                                 closeResult.error().message());
-                    }
-                }
-            });
+        _socket.async_read_some(boost::asio::buffer(_readBuffer),
+                                [self = shared_from_this()](const ErrorCode& errorCode,
+                                                            const std::size_t length) -> void {
+                                    self->OnRead(errorCode, length);
+                                });
 
         return {};
+    }
+
+    auto Connection::OnRead(const ErrorCode& errorCode, const std::size_t length) -> void
+    {
+        if (_status != Status::Started)
+            return;
+
+        if (errorCode)
+        {
+            WarnLog("Connection async read failed: {}", errorCode.message());
+            CloseAfterFailure("async read failure");
+            return;
+        }
+
+        if (!ProcessRead(length))
+            return;
+
+        RestartIdleTimer();
+
+        if (const auto result = DoRead(); !result)
+        {
+            ErrorLog("Failed to restart connection read: {}", result.error().message());
+            CloseAfterFailure("read restart failure");
+        }
+    }
+
+    auto Connection::ProcessRead(const std::size_t length) -> bool
+    {
+        const auto limit = GetMaxRequestSize();
+        if (length > limit)
+        {
+            ErrorLog("Max request size exceeded! Current: {}, Limit: {}", length, limit);
+            CloseAfterFailure("request size limit exceeded");
+            return false;
+        }
+
+        if (!_protocol)
+            return true;
+
+        _protocol->SetMaxRequestSize(limit);
+        const auto received = std::span(_readBuffer).first(length);
+        if (_protocol->OnBytes(received))
+            return true;
+
+        CloseAfterFailure("protocol rejected input");
+        return false;
+    }
+
+    auto Connection::CloseAfterFailure(const std::string_view reason) -> void
+    {
+        if (const auto closeResult = Close(); !closeResult)
+        {
+            ErrorLog("Failed to close connection after {}: {}",
+                     reason,
+                     closeResult.error().message());
+        }
     }
 
     // NOLINTNEXTLINE(misc-no-recursion)
@@ -262,53 +273,51 @@ namespace Flux
 
         _socket.async_write_some(
             boost::asio::buffer(*data) + _writeOffset,
-            // NOLINTNEXTLINE(misc-no-recursion)
-            [self = shared_from_this(), data](const ErrorCode& errorCode,
-                                              const std::size_t length) -> void {
-                if (self->_status != Status::Started)
-                    return;
-
-                if (errorCode)
-                {
-                    WarnLog("Connection async write failed: {}", errorCode.message());
-                    if (const auto closeResult = self->Close(); !closeResult)
-                    {
-                        ErrorLog("Failed to close connection after async write failure: {}",
-                                 closeResult.error().message());
-                    }
-                    return;
-                }
-
-                if (length > 0)
-                {
-                    self->_writeOffset += length;
-                    self->RestartIdleTimer();
-                }
-
-                if (self->_writeOffset == data->size())
-                {
-                    self->_pendingSendBytes -= data->size();
-                    self->_sendQueue.pop_back();
-                    self->_writeOffset = 0;
-                }
-
-                if (const auto result = self->DoWrite(); !result)
-                {
-                    ErrorLog("Failed to start next connection write: {}", result.error().message());
-                    if (const auto closeResult = self->Close(); !closeResult)
-                    {
-                        ErrorLog(
-                            "Failed to close connection after next write initiation failure: {}",
-                            closeResult.error().message());
-                    }
-                }
-            });
+            [self = shared_from_this(), data](const ErrorCode& errorCode, const std::size_t length)
+                -> void { self->OnWrite(data, errorCode, length); });
         return {};
+    }
+
+    auto Connection::OnWrite(const std::shared_ptr<std::vector<std::byte>>& data,
+                             const ErrorCode& errorCode,
+                             const std::size_t length) -> void
+    {
+        if (_status != Status::Started)
+            return;
+
+        if (errorCode)
+        {
+            WarnLog("Connection async write failed: {}", errorCode.message());
+            CloseAfterFailure("async write failure");
+            return;
+        }
+
+        if (length > 0)
+        {
+            _writeOffset += length;
+            RestartIdleTimer();
+        }
+
+        if (_writeOffset == data->size())
+        {
+            _pendingSendBytes -= data->size();
+            _sendQueue.pop_back();
+            _writeOffset = 0;
+        }
+
+        if (const auto result = DoWrite(); !result)
+        {
+            ErrorLog("Failed to start next connection write: {}", result.error().message());
+            CloseAfterFailure("next write initiation failure");
+        }
     }
 
     auto Connection::RestartIdleTimer() -> void
     {
-        _idleTimer.expires_after(GetIdleTimeout());
+        const auto idleTimeout = GetIdleTimeout();
+        const auto maximumTimeout = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::time_point::max() - std::chrono::steady_clock::now());
+        _idleTimer.expires_after(idleTimeout < maximumTimeout ? idleTimeout : maximumTimeout);
         const auto generation = ++_idleTimerGeneration;
         _idleTimer.async_wait(
             [self = shared_from_this(), generation](const ErrorCode& timerError) -> void {

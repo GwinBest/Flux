@@ -135,7 +135,7 @@ namespace Flux::Test
     TEST_F(ConnectionIdleTimeoutTest, CustomTimeoutIsPreservedAndCanBeChangedBeforeStart)
     {
         EXPECT_EQ(_connection->GetIdleTimeout(), 1s);
-        _connection->SetIdleTimeout(2s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(2s).has_value());
         EXPECT_EQ(_connection->GetIdleTimeout(), 2s);
         ASSERT_NO_FATAL_FAILURE(Start());
         RunFor(1200ms);
@@ -241,9 +241,9 @@ namespace Flux::Test
 
     TEST_F(ConnectionIdleTimeoutTest, UpdatedTimeoutIsUsedOnNextRead)
     {
-        _connection->SetIdleTimeout(5s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(5s).has_value());
         ASSERT_NO_FATAL_FAILURE(Start());
-        _connection->SetIdleTimeout(1s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(1s).has_value());
         ASSERT_NO_FATAL_FAILURE(ReceiveActivity());
         ASSERT_NO_FATAL_FAILURE(AwaitPeerClose());
         ExpectClosed();
@@ -251,9 +251,9 @@ namespace Flux::Test
 
     TEST_F(ConnectionIdleTimeoutTest, UpdatedTimeoutIsUsedOnNextWrite)
     {
-        _connection->SetIdleTimeout(5s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(5s).has_value());
         ASSERT_NO_FATAL_FAILURE(Start());
-        _connection->SetIdleTimeout(1s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(1s).has_value());
         ASSERT_NO_FATAL_FAILURE(SendActivity());
         ASSERT_NO_FATAL_FAILURE(AwaitPeerClose());
         ExpectClosed();
@@ -261,9 +261,9 @@ namespace Flux::Test
 
     TEST_F(ConnectionIdleTimeoutTest, ShorteningActiveTimeoutRearmsWithoutTraffic)
     {
-        _connection->SetIdleTimeout(5s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(5s).has_value());
         ASSERT_NO_FATAL_FAILURE(Start());
-        _connection->SetIdleTimeout(1s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(1s).has_value());
         EXPECT_EQ(_connection->GetIdleTimeout(), 1s);
         RunFor(1200ms);
         ASSERT_NO_FATAL_FAILURE(ExpectClosed());
@@ -274,7 +274,7 @@ namespace Flux::Test
     {
         ASSERT_NO_FATAL_FAILURE(Start());
         RunFor(650ms);
-        _connection->SetIdleTimeout(2s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(2s).has_value());
         EXPECT_EQ(_connection->GetIdleTimeout(), 2s);
         RunFor(650ms);
         ASSERT_NO_FATAL_FAILURE(ExpectOpen());
@@ -286,37 +286,35 @@ namespace Flux::Test
     {
         ASSERT_NO_FATAL_FAILURE(Start());
         RunFor(650ms);
-        _connection->SetIdleTimeout(1s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(1s).has_value());
         RunFor(650ms);
         ASSERT_NO_FATAL_FAILURE(ExpectOpen());
         ASSERT_NO_FATAL_FAILURE(AwaitPeerClose());
         ExpectClosed();
     }
 
-    TEST_F(ConnectionIdleTimeoutTest, ZeroTimeoutClosesActiveConnectionWithoutTraffic)
+    TEST_F(ConnectionIdleTimeoutTest, NonPositiveTimeoutIsRejectedWithoutChangingActiveTimeout)
     {
-        _connection->SetIdleTimeout(5s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(5s).has_value());
         ASSERT_NO_FATAL_FAILURE(Start());
-        _connection->SetIdleTimeout(0s);
-        ASSERT_NO_FATAL_FAILURE(AwaitPeerClose());
-        ExpectClosed();
-    }
-
-    TEST_F(ConnectionIdleTimeoutTest, NegativeTimeoutClosesActiveConnectionWithoutTraffic)
-    {
-        _connection->SetIdleTimeout(5s);
-        ASSERT_NO_FATAL_FAILURE(Start());
-        _connection->SetIdleTimeout(-1s);
-        ASSERT_NO_FATAL_FAILURE(AwaitPeerClose());
-        ExpectClosed();
+        for (const auto invalidTimeout : {0s, -1s})
+        {
+            const auto result = _connection->SetIdleTimeout(invalidTimeout);
+            ASSERT_FALSE(result.has_value());
+            EXPECT_EQ(result.error(), boost::asio::error::invalid_argument);
+            EXPECT_EQ(_connection->GetIdleTimeout(), 5s);
+        }
+        RunFor(1200ms);
+        ASSERT_NO_FATAL_FAILURE(ExpectOpen());
     }
 
     TEST_F(ConnectionIdleTimeoutTest, PendingTimeoutUpdatesKeepTheLatestDeadline)
     {
-        _connection->SetIdleTimeout(5s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(5s).has_value());
         ASSERT_NO_FATAL_FAILURE(Start());
-        _connection->SetIdleTimeout(0s);
-        _connection->SetIdleTimeout(2s);
+        const auto invalidUpdate = _connection->SetIdleTimeout(0s);
+        ASSERT_FALSE(invalidUpdate.has_value());
+        ASSERT_TRUE(_connection->SetIdleTimeout(2s).has_value());
         EXPECT_EQ(_connection->GetIdleTimeout(), 2s);
         RunFor(1200ms);
         ASSERT_NO_FATAL_FAILURE(ExpectOpen());
@@ -339,7 +337,7 @@ namespace Flux::Test
             ASSERT_EQ(ready.wait_for(3s), std::future_status::ready);
             ready.get();
             ASSERT_TRUE(_connection->Send({}).get().has_value());
-            _connection->SetIdleTimeout(2s);
+            ASSERT_TRUE(_connection->SetIdleTimeout(2s).has_value());
         });
         RunFor(400ms);
         ASSERT_NO_FATAL_FAILURE(ExpectOpen());
@@ -351,7 +349,7 @@ namespace Flux::Test
     {
         ASSERT_NO_FATAL_FAILURE(Start());
         ASSERT_TRUE(AwaitFuture(_context, _connection->AsyncClose()).has_value());
-        _connection->SetIdleTimeout(5s);
+        ASSERT_TRUE(_connection->SetIdleTimeout(5s).has_value());
         EXPECT_EQ(_connection->GetIdleTimeout(), 5s);
         const std::weak_ptr weakConnection = _connection;
         _connection.reset();
@@ -374,7 +372,7 @@ namespace Flux::Test
         const ConnectionManager manager(1);
         const auto connection = manager.CreateAndStartConnection(std::move(socket), 5s);
         ASSERT_TRUE(connection.has_value());
-        connection.value()->SetIdleTimeout(1s);
+        ASSERT_TRUE(connection.value()->SetIdleTimeout(1s).has_value());
         EXPECT_EQ((*connection)->GetIdleTimeout(), 1s);
 
         peer.non_blocking(true);
@@ -397,22 +395,29 @@ namespace Flux::Test
         EXPECT_TRUE(pool.Stop().has_value());
     }
 
-    TEST_F(ConnectionIdleTimeoutTest, ZeroTimeoutExpiresOnStart)
+    TEST_F(ConnectionIdleTimeoutTest, NonPositiveTimeoutIsRejectedBeforeStart)
     {
-        _connection->SetIdleTimeout(0s);
-        EXPECT_EQ(_connection->GetIdleTimeout(), 0s);
+        const auto zeroResult = _connection->SetIdleTimeout(0s);
+        ASSERT_FALSE(zeroResult.has_value());
+        EXPECT_EQ(zeroResult.error(), boost::asio::error::invalid_argument);
+        EXPECT_EQ(_connection->GetIdleTimeout(), 1s);
+        const auto negativeResult = _connection->SetIdleTimeout(-1s);
+        ASSERT_FALSE(negativeResult.has_value());
+        EXPECT_EQ(negativeResult.error(), boost::asio::error::invalid_argument);
+        EXPECT_EQ(_connection->GetIdleTimeout(), 1s);
         ASSERT_NO_FATAL_FAILURE(Start());
-        ASSERT_NO_FATAL_FAILURE(AwaitPeerClose());
-        ExpectClosed();
+        ASSERT_NO_FATAL_FAILURE(ExpectOpen());
     }
 
-    TEST_F(ConnectionIdleTimeoutTest, NegativeTimeoutExpiresOnStart)
+    TEST_F(ConnectionIdleTimeoutTest, TimeoutAccessorHandlesDurationExtremes)
     {
-        _connection->SetIdleTimeout(-1s);
-        EXPECT_EQ(_connection->GetIdleTimeout(), -1s);
-        ASSERT_NO_FATAL_FAILURE(Start());
-        ASSERT_NO_FATAL_FAILURE(AwaitPeerClose());
-        ExpectClosed();
+        ASSERT_TRUE(_connection->SetIdleTimeout(std::chrono::seconds::max()).has_value());
+        EXPECT_EQ(_connection->GetIdleTimeout(), std::chrono::seconds::max());
+
+        const auto minimumResult = _connection->SetIdleTimeout(std::chrono::seconds::min());
+        ASSERT_FALSE(minimumResult.has_value());
+        EXPECT_EQ(minimumResult.error(), boost::asio::error::invalid_argument);
+        EXPECT_EQ(_connection->GetIdleTimeout(), std::chrono::seconds::max());
     }
 
     TEST_F(ConnectionIdleTimeoutTest, TimeoutReleasesPendingReadOwnershipAndManagerCapacity)
@@ -432,7 +437,7 @@ namespace Flux::Test
 
     TEST_F(ConnectionIdleTimeoutTest, ExplicitCloseCancelsLongTimerAndReleasesOwnershipPromptly)
     {
-        _connection->SetIdleTimeout(1h);
+        ASSERT_TRUE(_connection->SetIdleTimeout(1h).has_value());
         ASSERT_NO_FATAL_FAILURE(Start());
         ASSERT_TRUE(AwaitFuture(_context, _connection->AsyncClose()).has_value());
         const std::weak_ptr weakConnection = _connection;

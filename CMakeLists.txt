@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.19)
+cmake_minimum_required(VERSION 3.29)
 
 project(Flux LANGUAGES CXX)
 
@@ -16,9 +16,23 @@ option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" ON)
 option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(ENABLE_SANITIZERS_STRICT "Fail configuration when a requested sanitizer is unsupported" OFF)
 option(ENABLE_COVERAGE "Enable code coverage flags for Clang/GCC" OFF)
-option(ENABLE_CLANG_TIDY "Enable clang-tidy checks for project targets" OFF)
+option(ENABLE_CLANG_TIDY "Enable clang-tidy checks for project targets" ON)
 option(ENABLE_CLANG_FORMAT "Enable clang-format helper targets" ON)
 option(ENABLE_LINT_STRICT "Fail configuration when enabled lint tools are missing" OFF)
+
+if (WIN32)
+    add_compile_definitions(_WIN32_WINNT=0x0601)
+
+    if (MSVC AND ENABLE_ASAN)
+        # Keep MSVC STL annotations consistent with third-party libraries that
+        # are not built with AddressSanitizer.
+        add_compile_definitions(
+                _DISABLE_VECTOR_ANNOTATION
+                _DISABLE_STRING_ANNOTATION
+                _DISABLE_OPTIONAL_ANNOTATION
+        )
+    endif ()
+endif ()
 
 set(CLANG_TIDY_CONFIG_FILE "${CMAKE_SOURCE_DIR}/.clang-tidy" CACHE FILEPATH
         "Path to clang-tidy configuration file."
@@ -287,10 +301,6 @@ function(enable_sanitizers target_name)
     endif ()
 endfunction()
 
-function(enable_asan target_name)
-    enable_sanitizers(${target_name})
-endfunction()
-
 function(enable_coverage target_name)
     if (NOT ENABLE_COVERAGE)
         return()
@@ -298,7 +308,6 @@ function(enable_coverage target_name)
 
     if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(${target_name} PRIVATE --coverage -O0 -g)
-        # Consumers of an instrumented library must link the coverage runtime.
         target_link_options(${target_name} PUBLIC --coverage)
     elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         target_compile_options(${target_name} PRIVATE
@@ -311,10 +320,11 @@ function(enable_coverage target_name)
                 -fprofile-instr-generate
                 -fcoverage-mapping
         )
+    elseif (MSVC)
+        message(WARNING "Code coverage is not supported for MSVC compiler in this setup.")
     else ()
         message(FATAL_ERROR
-                "Coverage is unsupported for ${CMAKE_CXX_COMPILER_ID}."
-        )
+                "Coverage is unsupported for ${CMAKE_CXX_COMPILER_ID}.")
     endif ()
 endfunction()
 
