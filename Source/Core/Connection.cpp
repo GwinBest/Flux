@@ -314,7 +314,10 @@ namespace Flux
 
     auto Connection::RestartIdleTimer() -> void
     {
-        _idleTimer.expires_after(GetIdleTimeout());
+        const auto idleTimeout = GetIdleTimeout();
+        const auto maximumTimeout = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::time_point::max() - std::chrono::steady_clock::now());
+        _idleTimer.expires_after(idleTimeout < maximumTimeout ? idleTimeout : maximumTimeout);
         const auto generation = ++_idleTimerGeneration;
         _idleTimer.async_wait(
             [self = shared_from_this(), generation](const ErrorCode& timerError) -> void {
