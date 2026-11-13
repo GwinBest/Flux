@@ -298,10 +298,10 @@ namespace Flux::Test
             .MaxConnections = 42,
             .ConnectionConfig =
                 {
-                                    .IdleTimeout = std::chrono::seconds(9),
-                                    .MaxRequestSize = 2048,
-                                    .MaxSendQueue = 4096,
-                                    },
+                                   .IdleTimeout = std::chrono::seconds(9),
+                                   .MaxRequestSize = 2048,
+                                   .MaxSendQueue = 4096,
+                                   },
         };
 
         const Server server(options);
@@ -370,10 +370,10 @@ namespace Flux::Test
                         .MaxConnections = 1,
                         .ConnectionConfig =
                             {
-                                                .IdleTimeout = timeout,
-                                                .MaxRequestSize = requestLimit,
-                                                .MaxSendQueue = sendLimit,
-                                                },
+                                               .IdleTimeout = timeout,
+                                               .MaxRequestSize = requestLimit,
+                                               .MaxSendQueue = sendLimit,
+                                               },
                     });
                     const auto& actual = server.GetOptions().ConnectionConfig;
                     EXPECT_EQ(actual.IdleTimeout, timeout);
