@@ -3,6 +3,9 @@
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/error.hpp>
 #include <future>
+#include <utility>
+
+#include "Error.hpp"
 
 namespace Flux
 {
