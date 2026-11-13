@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.19)
+cmake_minimum_required(VERSION 3.29)
 
 project(Flux LANGUAGES CXX)
 
@@ -285,10 +285,6 @@ function(enable_sanitizers target_name)
         )
         copy_msvc_asan_runtime(${target_name})
     endif ()
-endfunction()
-
-function(enable_asan target_name)
-    enable_sanitizers(${target_name})
 endfunction()
 
 function(enable_coverage target_name)
