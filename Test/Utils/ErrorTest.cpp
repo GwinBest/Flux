@@ -1,7 +1,9 @@
 #include "Utils/Error.hpp"
+
 #include "gtest/gtest.h"
 
 #include <array>
+#include <limits>
 #include <string_view>
 
 namespace Flux::Test
@@ -83,7 +85,12 @@ namespace Flux::Test
 
     TEST(ErrorCategoryTest, DescribesUnknownValues)
     {
-        for (const auto value : {0, -1})
+        for (const auto value : {
+                 0,
+                 -1,
+                 std::numeric_limits<int>::min(),
+                 std::numeric_limits<int>::max(),
+             })
         {
             SCOPED_TRACE(value);
             EXPECT_EQ(GetErrorCategory().message(value), "unknown error");

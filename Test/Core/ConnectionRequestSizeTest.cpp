@@ -8,9 +8,12 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <span>
+#include <string>
 #include <vector>
 
 #include "../Support/Async.hpp"
+#include "../Support/Http.hpp"
 #include "Core/Connection.hpp"
 #include "Core/ConnectionManager.hpp"
 
@@ -58,18 +61,23 @@ namespace Flux::Test
                 ASSERT_TRUE(AwaitFuture(_context, _connection->AsyncStart()).has_value());
             }
 
-            auto ReceiveBytes(const std::size_t size) -> void
+            auto ReceiveBytes(const std::span<const std::byte> data) -> void
             {
-                const std::vector<std::byte> data(size, std::byte {42});
                 auto write = boost::asio::async_write(_peer,
-                                                      boost::asio::buffer(data),
+                                                      boost::asio::buffer(data.data(), data.size()),
                                                       boost::asio::use_future);
-                ASSERT_EQ(AwaitFuture(_context, std::move(write)), size);
+                ASSERT_EQ(AwaitFuture(_context, std::move(write)), data.size());
 
                 // Write completion only confirms transmission. Keep driving the receiver
                 // before checking that it is still open or sending the next fragment.
                 boost::asio::steady_timer settle(_context, 50ms);
                 AwaitFuture(_context, settle.async_wait(boost::asio::use_future));
+            }
+
+            auto ReceiveBytes(const std::size_t size) -> void
+            {
+                const std::vector<std::byte> data(size, std::byte {42});
+                ReceiveBytes(data);
             }
 
             auto ExpectOpen() -> void
@@ -116,11 +124,11 @@ namespace Flux::Test
         EXPECT_EQ(_connection->GetMaxRequestSize(), defaultLimit);
         ASSERT_NO_FATAL_FAILURE(Start());
 
-        ASSERT_NO_FATAL_FAILURE(ReceiveBytes(defaultLimit - 1));
+        const auto request = MakeHttpPostRequestWithSize(defaultLimit + 1);
+        const auto requestBytes = std::as_bytes(std::span(request.data(), request.size()));
+        ASSERT_NO_FATAL_FAILURE(ReceiveBytes(requestBytes.first(defaultLimit)));
         ASSERT_NO_FATAL_FAILURE(ExpectOpen());
-        ASSERT_NO_FATAL_FAILURE(ReceiveBytes(1));
-        ASSERT_NO_FATAL_FAILURE(ExpectOpen());
-        ASSERT_NO_FATAL_FAILURE(ReceiveBytes(1));
+        ASSERT_NO_FATAL_FAILURE(ReceiveBytes(requestBytes.subspan(defaultLimit)));
         ExpectClosed();
     }
 
@@ -130,6 +138,17 @@ namespace Flux::Test
         _connection->SetMaxRequestSize(limit);
         EXPECT_EQ(_connection->GetMaxRequestSize(), limit);
         ASSERT_NO_FATAL_FAILURE(Start());
+
+        if (constexpr auto maxLimit = 17; limit > maxLimit)
+        {
+            const auto request = MakeHttpPostRequestWithSize(limit + 1);
+            const auto requestBytes = std::as_bytes(std::span(request.data(), request.size()));
+            ASSERT_NO_FATAL_FAILURE(ReceiveBytes(requestBytes.first(limit)));
+            ASSERT_NO_FATAL_FAILURE(ExpectOpen());
+            ASSERT_NO_FATAL_FAILURE(ReceiveBytes(requestBytes.subspan(limit)));
+            ExpectClosed();
+            return;
+        }
 
         ASSERT_NO_FATAL_FAILURE(ReceiveBytes(limit));
         ASSERT_NO_FATAL_FAILURE(ExpectOpen());

@@ -7,6 +7,7 @@
 #include <expected>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_set>
 
 #include "Connection.hpp"
@@ -34,8 +35,19 @@ namespace Flux
         using ConnectionPtr = std::shared_ptr<Connection>;
 
     public:
-        explicit ConnectionManager(const ConnectionLimitOptions& options = {});
+        explicit ConnectionManager(const ConnectionLimitOptions& options = {},
+                                   SessionFactory sessionFactory = {});
+        ConnectionManager(const ConnectionLimitOptions& limitOptions,
+                          const ConnectionOptions& connectionOptions,
+                          std::optional<std::size_t> maxConnections = std::nullopt,
+                          SessionFactory sessionFactory = {});
+        ConnectionManager(const ConnectionOptions& connectionOptions,
+                          std::optional<std::size_t> maxConnections,
+                          SessionFactory sessionFactory = {});
         explicit ConnectionManager(std::size_t maxConnections);
+        ConnectionManager(std::size_t maxConnections,
+                          const ConnectionOptions& connectionOptions,
+                          SessionFactory sessionFactory = {});
         ConnectionManager(const ConnectionManager&) = delete;
         ConnectionManager(ConnectionManager&&) = delete;
         auto operator=(const ConnectionManager&) -> ConnectionManager& = delete;
@@ -47,18 +59,21 @@ namespace Flux
             return _maxConnections;
         }
 
-        [[nodiscard]] static auto
-            CalculateMaxConnections(const SystemResources& resources,
-                                    const ConnectionLimitOptions& options = {})
-                -> std::expected<std::size_t, std::error_code>;
+        [[nodiscard]] static auto CalculateMaxConnections(
+            const SystemResources& resources,
+            const ConnectionLimitOptions& options = ConnectionLimitOptions(),
+            std::optional<std::size_t> maxConnections = std::nullopt)
+            -> std::expected<std::size_t, std::error_code>;
 
-        auto CreateConnection(
-            boost::asio::ip::tcp::socket&& socket,
-            const std::chrono::seconds idleTimeout = Connection::IdleTimeoutDuration) const
+        auto CreateConnection(boost::asio::ip::tcp::socket&& socket) const
             -> std::expected<ConnectionPtr, ErrorCode>;
-        auto CreateAndStartConnection(
-            boost::asio::ip::tcp::socket&& socket,
-            const std::chrono::seconds idleTimeout = Connection::IdleTimeoutDuration) const
+        auto CreateConnection(boost::asio::ip::tcp::socket&& socket,
+                              std::chrono::seconds idleTimeout) const
+            -> std::expected<ConnectionPtr, ErrorCode>;
+        auto CreateAndStartConnection(boost::asio::ip::tcp::socket&& socket) const
+            -> std::expected<ConnectionPtr, ErrorCode>;
+        auto CreateAndStartConnection(boost::asio::ip::tcp::socket&& socket,
+                                      std::chrono::seconds idleTimeout) const
             -> std::expected<ConnectionPtr, ErrorCode>;
 
         [[nodiscard]] auto CloseConnection(const ConnectionPtr& connection) const -> Result;
@@ -74,5 +89,7 @@ namespace Flux
         std::shared_ptr<State> _state = std::make_shared<State>();
 
         const std::size_t _maxConnections;
+        const ConnectionOptions _connectionOptions;
+        const SessionFactory _sessionFactory;
     };
 }   // namespace Flux

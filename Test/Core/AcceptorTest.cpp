@@ -1,4 +1,5 @@
 #include "Core/Acceptor.hpp"
+
 #include "gtest/gtest.h"
 
 #include <boost/asio/io_context.hpp>
@@ -12,8 +13,10 @@
 #include <cstddef>
 #include <expected>
 #include <future>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -92,7 +95,7 @@ namespace Flux::Test
                         || probeError == boost::asio::error::try_again)
                 << probeError.message();
             client.non_blocking(false);
-            const std::vector<char> payload(32768, 'x');
+            constexpr std::string_view payload = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
             auto written = boost::asio::async_write(client,
                                                     boost::asio::buffer(payload),
                                                     boost::asio::use_future);
@@ -137,6 +140,65 @@ namespace Flux::Test
         ASSERT_NE(acceptor, nullptr);
         const auto stopResult = Await(Stop(acceptor));
         EXPECT_TRUE(stopResult.has_value()) << ErrorMessage(stopResult);
+    }
+
+    TEST(AcceptorFactoryTest, ConnectionLimitAccessorHonorsZeroOneAndMaximumCaps)
+    {
+        boost::asio::io_context context;
+        const auto strand = boost::asio::make_strand(context);
+        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+
+        for (const auto cap : {std::size_t {0}, std::size_t {1}, maximum})
+        {
+            SCOPED_TRACE(cap);
+            const auto result = Acceptor::CreateAcceptor(strand, MakeLoopbackEndpoint(), cap);
+            ASSERT_TRUE(result.has_value()) << ErrorMessage(result);
+            EXPECT_LE((*result)->GetMaxConnections(), cap);
+            if (cap == 0)
+            {
+                EXPECT_EQ((*result)->GetMaxConnections(), 0U);
+            }
+        }
+    }
+
+    TEST(AcceptorFactoryTest, RejectsNonPositiveConnectionIdleTimeout)
+    {
+        boost::asio::io_context context;
+        const auto strand = boost::asio::make_strand(context);
+
+        for (const auto timeout :
+             {std::chrono::seconds::min(), std::chrono::seconds::zero(), std::chrono::seconds {-1}})
+        {
+            SCOPED_TRACE(timeout.count());
+            const ConnectionOptions options {.IdleTimeout = timeout};
+            EXPECT_THROW(
+                {
+                    [[maybe_unused]] const auto result = Acceptor::CreateAcceptor(
+                        strand,
+                        MakeLoopbackEndpoint(),
+                        std::nullopt,
+                        options);
+                },
+                std::invalid_argument);
+        }
+    }
+
+    TEST(AcceptorFactoryTest, AcceptsMinimumAndMaximumPositiveConnectionIdleTimeouts)
+    {
+        boost::asio::io_context context;
+        const auto strand = boost::asio::make_strand(context);
+
+        for (const auto timeout : {std::chrono::seconds {1}, std::chrono::seconds::max()})
+        {
+            SCOPED_TRACE(timeout.count());
+            const ConnectionOptions options {.IdleTimeout = timeout};
+            const auto result = Acceptor::CreateAcceptor(strand,
+                                                         MakeLoopbackEndpoint(),
+                                                         std::size_t {1},
+                                                         options);
+            ASSERT_TRUE(result.has_value()) << ErrorMessage(result);
+            EXPECT_EQ((*result)->GetMaxConnections(), 1U);
+        }
     }
 
     TEST(AcceptorStartAcceptingTest, StartsAcceptingOnceFromInitializedState)
@@ -256,7 +318,7 @@ namespace Flux::Test
         acceptor.reset();
         EXPECT_FALSE(weakAcceptor.expired());
 
-        context.run();
+        EXPECT_GT(context.run(), 0U);
 
         EXPECT_TRUE(Await(std::move(started)).has_value());
         EXPECT_TRUE(Await(std::move(stopped)).has_value());
@@ -296,7 +358,7 @@ namespace Flux::Test
             commandsCompleted = true;
         });
 
-        context.run();
+        EXPECT_GT(context.run(), 0U);
         EXPECT_TRUE(commandsCompleted);
     }
 
@@ -314,7 +376,7 @@ namespace Flux::Test
 
         acceptor.reset();
         EXPECT_TRUE(weakAcceptor.expired());
-        context.run();
+        EXPECT_GT(context.run(), 0U);
         EXPECT_TRUE(context.stopped());
     }
 
@@ -405,7 +467,7 @@ namespace Flux::Test
         }
 
         auto stopped = Stop(*result);
-        context.run_for(3s);
+        EXPECT_GT(context.run_for(3s), 0U);
         EXPECT_TRUE(Await(std::move(stopped)).has_value());
         EXPECT_TRUE(context.stopped());
     }

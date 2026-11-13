@@ -1,6 +1,8 @@
 #include "Server.hpp"
+
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <barrier>
 #include <boost/asio/error.hpp>
 #include <boost/asio/ip/address_v4.hpp>
@@ -16,7 +18,10 @@
 #include <exception>
 #include <expected>
 #include <future>
+#include <limits>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -150,8 +155,7 @@ namespace Flux::Test
             {
                 if (future.wait_for(3s) != std::future_status::ready)
                     FailChild("Concurrent lifecycle call did not finish\n");
-                const auto result = future.get();
-                if (result)
+                if (const auto result = future.get())
                     ++successful;
                 else if (result.error()
                          != MakeErrorCode(raceRun ? Error::ServerNotInitialized
@@ -196,7 +200,7 @@ namespace Flux::Test
 
             Tcp::socket client(clientContext);
             client.connect(endpoint);
-            const std::string payload(32768, 's');
+            constexpr std::string_view payload = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
             auto written = boost::asio::async_write(client,
                                                     boost::asio::buffer(payload),
                                                     boost::asio::use_future);
@@ -268,6 +272,116 @@ namespace Flux::Test
     {
         const Server server(3, LoopbackEndpoint());
         EXPECT_EQ(server.GetThreadCount(), 3U);
+    }
+
+    TEST(ServerConstructorTest, RejectsNonPositiveIdleTimeout)
+    {
+        for (const auto timeout :
+             {std::chrono::seconds::min(), std::chrono::seconds {-1}, std::chrono::seconds::zero()})
+        {
+            SCOPED_TRACE(timeout.count());
+            const ServerOptions options {
+                .BindEndpoint = LoopbackEndpoint(),
+                .MaxConnections = std::nullopt,
+                .ConnectionOptions = {.IdleTimeout = timeout},
+            };
+
+            EXPECT_THROW(Server {options}, std::invalid_argument);
+        }
+    }
+
+    TEST(ServerConstructorTest, ExposesOptionsUsedToConfigureServer)
+    {
+        const ServerOptions options {
+            .ThreadCount = 3,
+            .BindEndpoint = LoopbackEndpoint(),
+            .MaxConnections = 42,
+            .ConnectionOptions =
+                {
+                                    .IdleTimeout = std::chrono::seconds(9),
+                                    .MaxRequestSize = 2048,
+                                    .MaxSendQueue = 4096,
+                                    },
+        };
+
+        const Server server(options);
+
+        EXPECT_EQ(server.GetThreadCount(), 3U);
+        EXPECT_EQ(server.GetOptions().BindEndpoint, options.BindEndpoint);
+        EXPECT_EQ(server.GetOptions().MaxConnections, 42U);
+        EXPECT_LE(server.GetMaxConnections(), 42U);
+        EXPECT_EQ(server.GetOptions().ConnectionOptions.IdleTimeout, std::chrono::seconds(9));
+        EXPECT_EQ(server.GetOptions().ConnectionOptions.MaxRequestSize, 2048U);
+        EXPECT_EQ(server.GetOptions().ConnectionOptions.MaxSendQueue, 4096U);
+    }
+
+    TEST(ServerConstructorTest, DefaultsToCalculatedConnectionCapacity)
+    {
+        const Server server(ServerOptions {
+            .ThreadCount = 1,
+            .BindEndpoint = LoopbackEndpoint(),
+            .MaxConnections = std::nullopt,
+        });
+
+        EXPECT_GT(server.GetMaxConnections(), 0U);
+    }
+
+    TEST(ServerConstructorTest, PreservesThreadAndConnectionLimitBoundaries)
+    {
+        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+        for (const auto threadCount : {std::size_t {0}, std::size_t {1}})
+        {
+            for (const auto connectionLimit : {std::size_t {0}, std::size_t {1}, maximum})
+            {
+                SCOPED_TRACE(testing::Message()
+                             << "threads=" << threadCount << ", connections=" << connectionLimit);
+                const Server server(ServerOptions {
+                    .ThreadCount = threadCount,
+                    .BindEndpoint = LoopbackEndpoint(),
+                    .MaxConnections = connectionLimit,
+                });
+                EXPECT_EQ(server.GetThreadCount(), std::max<std::size_t>(1, threadCount));
+                EXPECT_EQ(server.GetOptions().MaxConnections, connectionLimit);
+                EXPECT_LE(server.GetMaxConnections(), connectionLimit);
+                if (connectionLimit == 0)
+                {
+                    EXPECT_EQ(server.GetMaxConnections(), 0U);
+                }
+            }
+        }
+
+        EXPECT_THROW(Server(maximum, LoopbackEndpoint()), std::exception);
+    }
+
+    TEST(ServerConstructorTest, PreservesConnectionOptionBoundaries)
+    {
+        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+        for (const auto timeout : {std::chrono::seconds {1}, std::chrono::seconds::max()})
+        {
+            for (const auto requestLimit : {std::size_t {0}, std::size_t {1}, maximum})
+            {
+                for (const auto sendLimit : {std::size_t {0}, std::size_t {1}, maximum})
+                {
+                    SCOPED_TRACE(testing::Message() << "timeout=" << timeout.count() << ", request="
+                                                    << requestLimit << ", send=" << sendLimit);
+                    const Server server(ServerOptions {
+                        .ThreadCount = 1,
+                        .BindEndpoint = LoopbackEndpoint(),
+                        .MaxConnections = 1,
+                        .ConnectionOptions =
+                            {
+                                                .IdleTimeout = timeout,
+                                                .MaxRequestSize = requestLimit,
+                                                .MaxSendQueue = sendLimit,
+                                                },
+                    });
+                    const auto& actual = server.GetOptions().ConnectionOptions;
+                    EXPECT_EQ(actual.IdleTimeout, timeout);
+                    EXPECT_EQ(actual.MaxRequestSize, requestLimit);
+                    EXPECT_EQ(actual.MaxSendQueue, sendLimit);
+                }
+            }
+        }
     }
 
     TEST(ServerConstructorTest, PropagatesBindFailure)

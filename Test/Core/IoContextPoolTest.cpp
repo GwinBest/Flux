@@ -1,10 +1,12 @@
 #include "Core/IoContextPool.hpp"
+
 #include "gtest/gtest.h"
 
 #include <chrono>
 #include <cstddef>
 #include <exception>
 #include <future>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -68,6 +70,11 @@ namespace Flux::Test
         ASSERT_EQ(handlerStatus, std::future_status::ready);
         EXPECT_TRUE(handledOnStrand.get());
         EXPECT_TRUE(pool.GetIoContext().stopped());
+    }
+
+    TEST(IoContextPoolConstructorTest, RejectsUnrepresentableThreadCount)
+    {
+        EXPECT_THROW(IoContextPool(std::numeric_limits<std::size_t>::max()), std::exception);
     }
 
     TEST(IoContextPoolRunTest, StartsWorkerThreadsAndExecutesPostedWork)

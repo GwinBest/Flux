@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "Core/Connection.hpp"
+#include "Protocol/HttpSession.hpp"
 #include "Utils/Log.hpp"
 #include "Utils/SystemResources.hpp"
 
@@ -16,28 +17,80 @@ namespace Flux
 {
     namespace
     {
-        auto DetectMaxConnections(const ConnectionLimitOptions& options)
+        auto ValidateConnectionOptions(const ConnectionOptions& options) -> void
+        {
+            if (options.IdleTimeout <= std::chrono::seconds::zero())
+                throw std::invalid_argument("IdleTimeout must be greater than zero");
+        }
+
+        auto DetectMaxConnections(const ConnectionLimitOptions& options,
+                                  const std::optional<std::size_t> maxConnections,
+                                  const ConnectionOptions& connectionOptions)
             -> std::expected<std::size_t, std::error_code>
         {
+            ValidateConnectionOptions(connectionOptions);
+
             const auto result = GetSystemResources();
 
             if (!result.has_value())
                 return std::unexpected(result.error());
 
-            return ConnectionManager::CalculateMaxConnections(result.value(), options);
+            return ConnectionManager::CalculateMaxConnections(result.value(),
+                                                              options,
+                                                              maxConnections);
+        }
+
+        auto ResolveSessionFactory(SessionFactory sessionFactory) -> SessionFactory
+        {
+            if (sessionFactory)
+                return sessionFactory;
+
+            return
+                [] -> std::unique_ptr<IProtocolSession> { return std::make_unique<HttpSession>(); };
         }
     }   // namespace
 
-    ConnectionManager::ConnectionManager(const ConnectionLimitOptions& options)
-        : ConnectionManager(DetectMaxConnections(options).value())
+    ConnectionManager::ConnectionManager(const ConnectionLimitOptions& options,
+                                         SessionFactory sessionFactory)
+        : ConnectionManager(options, ConnectionOptions(), std::nullopt, std::move(sessionFactory))
+    {}
+
+    ConnectionManager::ConnectionManager(const ConnectionLimitOptions& limitOptions,
+                                         const ConnectionOptions& connectionOptions,
+                                         const std::optional<std::size_t> maxConnections,
+                                         SessionFactory sessionFactory)
+        : _maxConnections(
+              DetectMaxConnections(limitOptions, maxConnections, connectionOptions).value())
+        , _connectionOptions(connectionOptions)
+        , _sessionFactory(ResolveSessionFactory(std::move(sessionFactory)))
+    {}
+
+    ConnectionManager::ConnectionManager(const ConnectionOptions& connectionOptions,
+                                         const std::optional<std::size_t> maxConnections,
+                                         SessionFactory sessionFactory)
+        : ConnectionManager(ConnectionLimitOptions(),
+                            connectionOptions,
+                            maxConnections,
+                            std::move(sessionFactory))
     {}
 
     ConnectionManager::ConnectionManager(const std::size_t maxConnections)
-        : _maxConnections(maxConnections)
+        : ConnectionManager(maxConnections, {})
     {}
 
+    ConnectionManager::ConnectionManager(const std::size_t maxConnections,
+                                         const ConnectionOptions& connectionOptions,
+                                         SessionFactory sessionFactory)
+        : _maxConnections(maxConnections)
+        , _connectionOptions(connectionOptions)
+        , _sessionFactory(ResolveSessionFactory(std::move(sessionFactory)))
+    {
+        ValidateConnectionOptions(_connectionOptions);
+    }
+
     auto ConnectionManager::CalculateMaxConnections(const SystemResources& resources,
-                                                    const ConnectionLimitOptions& options)
+                                                    const ConnectionLimitOptions& options,
+                                                    const std::optional<std::size_t> maxConnections)
         -> std::expected<std::size_t, std::error_code>
     {
         if (options.MemoryPerConnectionBytes == 0 || !std::isfinite(options.SafetyFactor)
@@ -60,13 +113,27 @@ namespace Flux
             return maxSize;
         }
 
-        return static_cast<std::size_t>(scaledLimit);
+        const auto calculatedLimit = static_cast<std::size_t>(scaledLimit);
+        return maxConnections ? std::min(calculatedLimit, *maxConnections) : calculatedLimit;
+    }
+
+    auto ConnectionManager::CreateConnection(boost::asio::ip::tcp::socket&& socket) const
+        -> std::expected<ConnectionPtr, ErrorCode>
+    {
+        return CreateConnection(std::move(socket), _connectionOptions.IdleTimeout);
     }
 
     auto ConnectionManager::CreateConnection(boost::asio::ip::tcp::socket&& socket,
                                              const std::chrono::seconds idleTimeout) const
         -> std::expected<ConnectionPtr, ErrorCode>
     {
+        if (idleTimeout <= std::chrono::seconds::zero())
+            return std::unexpected(boost::asio::error::invalid_argument);
+
+        auto protocolSession = _sessionFactory();
+        if (!protocolSession)
+            throw std::runtime_error("SessionFactory returned a null session");
+
         const std::scoped_lock lock(_state->Mutex);
         if (_state->Connections.size() >= _maxConnections)
         {
@@ -86,11 +153,22 @@ namespace Flux
                     state->Connections.erase(connectionToClose);
                 }
             },
-            idleTimeout));
+            std::move(protocolSession),
+            ConnectionOptions {
+                .IdleTimeout = idleTimeout,
+                .MaxRequestSize = _connectionOptions.MaxRequestSize,
+                .MaxSendQueue = _connectionOptions.MaxSendQueue,
+            }));
 
         _state->Connections.insert(connection);
 
         return connection;
+    }
+
+    auto ConnectionManager::CreateAndStartConnection(boost::asio::ip::tcp::socket&& socket) const
+        -> std::expected<ConnectionPtr, ErrorCode>
+    {
+        return CreateAndStartConnection(std::move(socket), _connectionOptions.IdleTimeout);
     }
 
     auto ConnectionManager::CreateAndStartConnection(boost::asio::ip::tcp::socket&& socket,

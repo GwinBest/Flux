@@ -170,10 +170,14 @@ namespace Flux
     }
 
     auto Acceptor::CreateAcceptor(const IoContextPool::Strand& strand,
-                                  const boost::asio::ip::tcp::endpoint& endpoint)
+                                  const boost::asio::ip::tcp::endpoint& endpoint,
+                                  const std::optional<std::size_t> maxConnections,
+                                  const ConnectionOptions& connectionOptions,
+                                  SessionFactory sessionFactory)
         -> std::expected<std::shared_ptr<Acceptor>, ErrorCode>
     {
-        auto acceptor = std::shared_ptr<Acceptor>(new Acceptor(strand));
+        auto acceptor = std::shared_ptr<Acceptor>(
+            new Acceptor(strand, maxConnections, connectionOptions, std::move(sessionFactory)));
 
         if (const auto openResult = acceptor->Open(endpoint); !openResult)
             return std::unexpected(openResult.error());
@@ -254,10 +258,14 @@ namespace Flux
         return {};
     }
 
-    Acceptor::Acceptor(IoContextPool::Strand strand)
+    Acceptor::Acceptor(IoContextPool::Strand strand,
+                       const std::optional<std::size_t> maxConnections,
+                       const ConnectionOptions& connectionOptions,
+                       SessionFactory sessionFactory)
         : _strand(std::move(strand))
         , _acceptor(_strand)
         , _retryTimer(_strand)
+        , _connectionManager(connectionOptions, maxConnections, std::move(sessionFactory))
     {}
 
     auto Acceptor::Open(const boost::asio::ip::tcp::endpoint& endpoint) -> Result
