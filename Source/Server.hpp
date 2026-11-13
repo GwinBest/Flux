@@ -21,21 +21,41 @@ namespace Flux
 
     struct ServerOptions final
     {
+    public:
+        ServerOptions() { SetProtocol<HttpSession>(); }
+
+        template<typename Protocol>
+        auto SetProtocol() -> void
+        {
+            _protocol = [] -> std::unique_ptr<IProtocolSession> {
+                return std::make_unique<Protocol>();
+            };
+        }
+
+        [[nodiscard]] auto GetProtocolFactory() const noexcept -> const SessionFactory&
+        {
+            return _protocol;
+        }
+
+        [[nodiscard]] auto GetProtocol() const noexcept -> std::unique_ptr<IProtocolSession>
+        {
+            return _protocol();
+        }
+
+    public:
         std::size_t ThreadCount = std::thread::hardware_concurrency();
         Endpoint BindEndpoint;
         std::optional<std::size_t> MaxConnections;
         ConnectionOptions ConnectionConfig {};
 
-        SessionFactory Session = [] -> std::unique_ptr<IProtocolSession> {
-            return std::make_unique<HttpSession>();
-        };
+    private:
+        SessionFactory _protocol;
     };
 
     class Server final
     {
     public:
         explicit Server(const ServerOptions& options = ServerOptions());
-        Server(const std::size_t threadCount, const Endpoint& endpoint);
 
         Server(const Server&) = delete;
         auto operator=(const Server&) -> Server& = delete;

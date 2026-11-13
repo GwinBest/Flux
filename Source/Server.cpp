@@ -20,7 +20,7 @@ namespace Flux
         {
             if (options.ConnectionConfig.IdleTimeout <= std::chrono::seconds::zero())
                 throw std::invalid_argument("IdleTimeout must be greater than zero");
-            if (!options.Session)
+            if (!options.GetProtocolFactory())
                 throw std::invalid_argument("SessionFactory must not be empty");
 
             return std::max<std::size_t>(1, options.ThreadCount);
@@ -38,7 +38,7 @@ namespace Flux
                                                        options.BindEndpoint,
                                                        options.MaxConnections,
                                                        options.ConnectionConfig,
-                                                       options.Session);
+                                                       options.GetProtocolFactory());
         if (!acceptorResult)
             throw boost::system::system_error(acceptorResult.error(),
                                               "Failed to create server acceptor");
@@ -68,14 +68,6 @@ namespace Flux
             InfoLog("Shutdown requested by signal={}", signalNumber);
         });
     }
-
-    Server::Server(const std::size_t threadCount, const Endpoint& endpoint)
-        : Server(ServerOptions {
-              .ThreadCount = threadCount,
-              .BindEndpoint = endpoint,
-              .MaxConnections = std::nullopt,
-          })
-    {}
 
     Server::~Server()
     {

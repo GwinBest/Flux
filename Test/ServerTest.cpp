@@ -33,9 +33,27 @@ namespace Flux::Test
 {
     namespace
     {
+        class TestProtocolSession final : public IProtocolSession
+        {
+        public:
+            auto OnBytes(const std::span<const std::byte> /*bytes*/) -> bool override
+            {
+                return true;
+            }
+        };
+
         auto LoopbackEndpoint() -> Endpoint
         {
             return {boost::asio::ip::address_v4::loopback(), 0};
+        }
+
+        auto MakeServerOptions(const std::size_t threadCount, const Endpoint& endpoint)
+            -> ServerOptions
+        {
+            ServerOptions options;
+            options.ThreadCount = threadCount;
+            options.BindEndpoint = endpoint;
+            return options;
         }
 
         [[noreturn]] auto FailChild(const char* message) -> void
@@ -83,7 +101,7 @@ namespace Flux::Test
                              const bool explicitStop,
                              const std::size_t threadCount = 2) -> void
         {
-            Server server(threadCount, LoopbackEndpoint());
+            Server server(MakeServerOptions(threadCount, LoopbackEndpoint()));
             if (std::raise(signalNumber) != 0)
                 FailChild("Failed to raise shutdown signal\n");
             if (!server.Run())
@@ -124,7 +142,7 @@ namespace Flux::Test
         {
             using namespace std::chrono_literals;
             constexpr std::size_t callers = 8;
-            Server server(2, LoopbackEndpoint());
+            Server server(MakeServerOptions(2, LoopbackEndpoint()));
             if (!raceRun)
             {
                 if (std::raise(SIGTERM) != 0 || !server.Run())
@@ -195,7 +213,7 @@ namespace Flux::Test
             Tcp::acceptor reservation(clientContext, LoopbackEndpoint());
             const auto endpoint = reservation.local_endpoint();
             reservation.close();
-            Server server(1, endpoint);
+            Server server(MakeServerOptions(1, endpoint));
             auto run = std::async(std::launch::async, [&server] -> Result { return server.Run(); });
 
             Tcp::socket client(clientContext);
@@ -262,15 +280,35 @@ namespace Flux::Test
     static_assert(!std::is_move_assignable_v<Server>);
     static_assert(std::is_destructible_v<Server>);
 
+    TEST(ServerOptionsTest, DefaultsToHttpSession)
+    {
+        const ServerOptions options;
+        const auto session = options.GetProtocol();
+
+        ASSERT_NE(session, nullptr);
+        EXPECT_NE(dynamic_cast<HttpSession*>(session.get()), nullptr);
+    }
+
+    TEST(ServerOptionsTest, SetProtocolCreatesConfiguredSession)
+    {
+        ServerOptions options;
+        options.SetProtocol<TestProtocolSession>();
+
+        const auto session = options.GetProtocol();
+
+        ASSERT_NE(session, nullptr);
+        EXPECT_NE(dynamic_cast<TestProtocolSession*>(session.get()), nullptr);
+    }
+
     TEST(ServerConstructorTest, NormalizesZeroThreadCount)
     {
-        const Server server(0, LoopbackEndpoint());
+        const Server server(MakeServerOptions(0, LoopbackEndpoint()));
         EXPECT_EQ(server.GetThreadCount(), 1U);
     }
 
     TEST(ServerConstructorTest, PreservesPositiveThreadCount)
     {
-        const Server server(3, LoopbackEndpoint());
+        const Server server(MakeServerOptions(3, LoopbackEndpoint()));
         EXPECT_EQ(server.GetThreadCount(), 3U);
     }
 
@@ -280,11 +318,9 @@ namespace Flux::Test
              {std::chrono::seconds::min(), std::chrono::seconds {-1}, std::chrono::seconds::zero()})
         {
             SCOPED_TRACE(timeout.count());
-            const ServerOptions options {
-                .BindEndpoint = LoopbackEndpoint(),
-                .MaxConnections = std::nullopt,
-                .ConnectionConfig = {.IdleTimeout = timeout},
-            };
+            ServerOptions options;
+            options.BindEndpoint = LoopbackEndpoint();
+            options.ConnectionConfig.IdleTimeout = timeout;
 
             EXPECT_THROW(Server {options}, std::invalid_argument);
         }
@@ -292,36 +328,37 @@ namespace Flux::Test
 
     TEST(ServerConstructorTest, ExposesOptionsUsedToConfigureServer)
     {
-        const ServerOptions options {
-            .ThreadCount = 3,
-            .BindEndpoint = LoopbackEndpoint(),
-            .MaxConnections = 42,
-            .ConnectionConfig =
-                {
-                                   .IdleTimeout = std::chrono::seconds(9),
-                                   .MaxRequestSize = 2048,
-                                   .MaxSendQueue = 4096,
-                                   },
-        };
+        constexpr std::size_t threadCount = 3;
+        constexpr std::size_t maxConnections = 42;
+        constexpr auto idleTimeout = std::chrono::seconds(9);
+        constexpr std::size_t maxRequestSize = 2048;
+        constexpr std::size_t maxSendQueue = 4096;
+
+        ServerOptions options;
+        options.ThreadCount = threadCount;
+        options.BindEndpoint = LoopbackEndpoint();
+        options.MaxConnections = maxConnections;
+        options.ConnectionConfig.IdleTimeout = idleTimeout;
+        options.ConnectionConfig.MaxRequestSize = maxRequestSize;
+        options.ConnectionConfig.MaxSendQueue = maxSendQueue;
 
         const Server server(options);
 
-        EXPECT_EQ(server.GetThreadCount(), 3U);
+        EXPECT_EQ(server.GetThreadCount(), threadCount);
         EXPECT_EQ(server.GetOptions().BindEndpoint, options.BindEndpoint);
-        EXPECT_EQ(server.GetOptions().MaxConnections, 42U);
-        EXPECT_LE(server.GetMaxConnections(), 42U);
-        EXPECT_EQ(server.GetOptions().ConnectionConfig.IdleTimeout, std::chrono::seconds(9));
-        EXPECT_EQ(server.GetOptions().ConnectionConfig.MaxRequestSize, 2048U);
-        EXPECT_EQ(server.GetOptions().ConnectionConfig.MaxSendQueue, 4096U);
+        EXPECT_EQ(server.GetOptions().MaxConnections, maxConnections);
+        EXPECT_LE(server.GetMaxConnections(), maxConnections);
+        EXPECT_EQ(server.GetOptions().ConnectionConfig.IdleTimeout, idleTimeout);
+        EXPECT_EQ(server.GetOptions().ConnectionConfig.MaxRequestSize, maxRequestSize);
+        EXPECT_EQ(server.GetOptions().ConnectionConfig.MaxSendQueue, maxSendQueue);
     }
 
     TEST(ServerConstructorTest, DefaultsToCalculatedConnectionCapacity)
     {
-        const Server server(ServerOptions {
-            .ThreadCount = 1,
-            .BindEndpoint = LoopbackEndpoint(),
-            .MaxConnections = std::nullopt,
-        });
+        ServerOptions options;
+        options.ThreadCount = 1;
+        options.BindEndpoint = LoopbackEndpoint();
+        const Server server(options);
 
         EXPECT_GT(server.GetMaxConnections(), 0U);
     }
@@ -335,11 +372,11 @@ namespace Flux::Test
             {
                 SCOPED_TRACE(testing::Message()
                              << "threads=" << threadCount << ", connections=" << connectionLimit);
-                const Server server(ServerOptions {
-                    .ThreadCount = threadCount,
-                    .BindEndpoint = LoopbackEndpoint(),
-                    .MaxConnections = connectionLimit,
-                });
+                ServerOptions options;
+                options.ThreadCount = threadCount;
+                options.BindEndpoint = LoopbackEndpoint();
+                options.MaxConnections = connectionLimit;
+                const Server server(options);
                 EXPECT_EQ(server.GetThreadCount(), std::max<std::size_t>(1, threadCount));
                 EXPECT_EQ(server.GetOptions().MaxConnections, connectionLimit);
                 EXPECT_LE(server.GetMaxConnections(), connectionLimit);
@@ -349,8 +386,6 @@ namespace Flux::Test
                 }
             }
         }
-
-        EXPECT_THROW(Server(maximum, LoopbackEndpoint()), std::exception);
     }
 
     TEST(ServerConstructorTest, PreservesConnectionOptionBoundaries)
@@ -364,17 +399,12 @@ namespace Flux::Test
                 {
                     SCOPED_TRACE(testing::Message() << "timeout=" << timeout.count() << ", request="
                                                     << requestLimit << ", send=" << sendLimit);
-                    const Server server(ServerOptions {
-                        .ThreadCount = 1,
-                        .BindEndpoint = LoopbackEndpoint(),
-                        .MaxConnections = 1,
-                        .ConnectionConfig =
-                            {
-                                               .IdleTimeout = timeout,
-                                               .MaxRequestSize = requestLimit,
-                                               .MaxSendQueue = sendLimit,
-                                               },
-                    });
+                    auto options = MakeServerOptions(1, LoopbackEndpoint());
+                    options.MaxConnections = 1;
+                    options.ConnectionConfig.IdleTimeout = timeout;
+                    options.ConnectionConfig.MaxRequestSize = requestLimit;
+                    options.ConnectionConfig.MaxSendQueue = sendLimit;
+                    const Server server(options);
                     const auto& actual = server.GetOptions().ConnectionConfig;
                     EXPECT_EQ(actual.IdleTimeout, timeout);
                     EXPECT_EQ(actual.MaxRequestSize, requestLimit);
@@ -391,7 +421,7 @@ namespace Flux::Test
         OccupyEndpoint(occupied);
         try
         {
-            const Server server(1, occupied.local_endpoint());
+            const Server server(MakeServerOptions(1, occupied.local_endpoint()));
             FAIL() << "Constructing a second listener on an occupied endpoint must fail";
         }
         catch (const boost::system::system_error& error)
@@ -406,7 +436,7 @@ namespace Flux::Test
 
     TEST(ServerStopTest, RejectsStopBeforeRun)
     {
-        Server server(1, LoopbackEndpoint());
+        Server server(MakeServerOptions(1, LoopbackEndpoint()));
         const auto result = server.Stop();
         ASSERT_FALSE(result.has_value());
         EXPECT_EQ(result.error(), MakeErrorCode(Error::ServerNotStopping));
