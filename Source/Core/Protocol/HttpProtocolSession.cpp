@@ -1,7 +1,8 @@
+#include "HttpProtocolSession.hpp"
+
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 
-#include "HttpProtocolSession.hpp"
 #include "Utils/Log.hpp"
 
 namespace Flux
