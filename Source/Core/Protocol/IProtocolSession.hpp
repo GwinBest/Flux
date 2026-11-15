@@ -3,7 +3,6 @@
 #include <boost/beast/core.hpp>
 #include <cstddef>
 #include <functional>
-#include <memory>
 #include <span>
 
 namespace Flux
@@ -20,15 +19,12 @@ namespace Flux
 
         virtual auto OnBytes(const std::span<const std::byte> bytes) -> bool = 0;
 
-        auto SetMaxRequestSize(const std::size_t maxRequestSize) noexcept -> void
-        {
-            _leftoverBuffer.max_size(maxRequestSize);
-        }
+        auto SetMaxRequestSize(const std::size_t maxRequestSize) noexcept -> void;
 
-        [[nodiscard]] auto GetMaxRequestSize() const noexcept -> std::size_t
-        {
-            return _leftoverBuffer.max_size();
-        }
+        [[nodiscard]] auto GetMaxRequestSize() const noexcept -> std::size_t;
+
+    protected:
+        auto BufferIncomingBytes(const std::span<const std::byte> bytes) -> bool;
 
     protected:
         boost::beast::flat_buffer _leftoverBuffer;

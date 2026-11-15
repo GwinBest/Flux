@@ -9,23 +9,8 @@ namespace Flux
 {
     auto HttpProtocolSession::OnBytes(const std::span<const std::byte> bytes) -> bool
     {
-        if (bytes.empty())
-            return true;
-
-        const auto bufferedSize = _leftoverBuffer.size();
-        const auto maxRequestSize = _leftoverBuffer.max_size();
-        if (bufferedSize > maxRequestSize || bytes.size() > maxRequestSize - bufferedSize)
-        {
-            ErrorLog("HTTP request size limit exceeded: buffered={}, incoming={}, limit={}",
-                     bufferedSize,
-                     bytes.size(),
-                     maxRequestSize);
+        if (!BufferIncomingBytes(bytes))
             return false;
-        }
-
-        const auto writableSpace = _leftoverBuffer.prepare(bytes.size());
-        std::memcpy(writableSpace.data(), bytes.data(), bytes.size());
-        _leftoverBuffer.commit(bytes.size());
 
         while (_leftoverBuffer.size() > 0)
         {
