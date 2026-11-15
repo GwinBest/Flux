@@ -235,6 +235,9 @@ namespace Flux
         {
             ErrorLog("Max request size exceeded! Current: {}, Limit: {}", length, limit);
             CloseAfterFailure("request size limit exceeded");
+
+            // TODO: return http 413
+
             return false;
         }
 
