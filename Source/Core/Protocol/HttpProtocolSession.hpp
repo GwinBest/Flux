@@ -7,7 +7,7 @@
 
 namespace Flux
 {
-    class HttpSession : public IProtocolSession
+    class HttpProtocolSession : public IProtocolSession
     {
     public:
         auto OnBytes(const std::span<const std::byte> bytes) -> bool override;

@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "Core/Connection.hpp"
-#include "Protocol/HttpSession.hpp"
+#include "Protocol/HttpProtocolSession.hpp"
 #include "Utils/Log.hpp"
 #include "Utils/SystemResources.hpp"
 
@@ -45,8 +45,9 @@ namespace Flux
             if (sessionFactory)
                 return sessionFactory;
 
-            return
-                [] -> std::unique_ptr<IProtocolSession> { return std::make_unique<HttpSession>(); };
+            return [] -> std::unique_ptr<IProtocolSession> {
+                return std::make_unique<HttpProtocolSession>();
+            };
         }
     }   // namespace
 

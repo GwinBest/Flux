@@ -11,7 +11,7 @@
 
 #include "Core/Acceptor.hpp"
 #include "Core/IoContextPool.hpp"
-#include "Core/Protocol/HttpSession.hpp"
+#include "Core/Protocol/HttpProtocolSession.hpp"
 #include "Core/Protocol/IProtocolSession.hpp"
 #include "Utils/Error.hpp"
 
@@ -22,7 +22,7 @@ namespace Flux
     struct ServerOptions final
     {
     public:
-        ServerOptions() { SetProtocol<HttpSession>(); }
+        ServerOptions() { SetProtocol<HttpProtocolSession>(); }
 
         template<typename Protocol>
         auto SetProtocol() -> void
@@ -37,7 +37,7 @@ namespace Flux
             return _protocol;
         }
 
-        [[nodiscard]] auto GetProtocol() const noexcept -> std::unique_ptr<IProtocolSession>
+        [[nodiscard]] auto GetProtocol() const -> std::unique_ptr<IProtocolSession>
         {
             return _protocol();
         }

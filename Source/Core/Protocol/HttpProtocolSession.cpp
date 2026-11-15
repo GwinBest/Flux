@@ -1,13 +1,12 @@
-#include "HttpSession.hpp"
-
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 
+#include "HttpProtocolSession.hpp"
 #include "Utils/Log.hpp"
 
 namespace Flux
 {
-    auto HttpSession::OnBytes(const std::span<const std::byte> bytes) -> bool
+    auto HttpProtocolSession::OnBytes(const std::span<const std::byte> bytes) -> bool
     {
         if (bytes.empty())
             return true;

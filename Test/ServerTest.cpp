@@ -286,7 +286,7 @@ namespace Flux::Test
         const auto session = options.GetProtocol();
 
         ASSERT_NE(session, nullptr);
-        EXPECT_NE(dynamic_cast<HttpSession*>(session.get()), nullptr);
+        EXPECT_NE(dynamic_cast<HttpProtocolSession*>(session.get()), nullptr);
     }
 
     TEST(ServerOptionsTest, SetProtocolCreatesConfiguredSession)

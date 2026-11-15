@@ -1,5 +1,3 @@
-#include "Core/Protocol/HttpSession.hpp"
-
 #include "gtest/gtest.h"
 
 #include <cstddef>
@@ -8,11 +6,13 @@
 #include <span>
 #include <string_view>
 
+#include "Core/Protocol/HttpProtocolSession.hpp"
+
 namespace Flux::Test
 {
     TEST(HttpSessionTest, RequestLimitAccessorsPreserveZeroOneMinAndMaximumValues)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         constexpr auto maximum = std::numeric_limits<std::size_t>::max();
         constexpr auto minimum = std::numeric_limits<std::size_t>::min();
         for (const auto limit : {std::size_t {0}, std::size_t {1}, minimum, maximum})
@@ -25,7 +25,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, SupportsDestructionThroughProtocolInterface)
     {
-        const std::unique_ptr<IProtocolSession> session = std::make_unique<HttpSession>();
+        const std::unique_ptr<IProtocolSession> session = std::make_unique<HttpProtocolSession>();
         session->SetMaxRequestSize(1);
         EXPECT_EQ(session->GetMaxRequestSize(), 1U);
         EXPECT_TRUE(session->OnBytes({}));
@@ -33,7 +33,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, RejectsInputThatWouldExceedConfiguredLimit)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         session.SetMaxRequestSize(4);
         constexpr std::string_view bytes = "GET / HTTP/1.1\r\n";
 
@@ -42,7 +42,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, AllowsEmptyInputWithZeroLimit)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         session.SetMaxRequestSize(0);
 
         EXPECT_TRUE(session.OnBytes({}));
@@ -50,7 +50,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, RejectsBytesThatExceedLimitAfterPartialRequest)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         constexpr std::string_view
             request = "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 4\r\n\r\nbody";
         session.SetMaxRequestSize(request.size() - 1);
@@ -62,7 +62,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, AcceptsRequestDeliveredOneByteAtATime)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         constexpr std::string_view request = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
         session.SetMaxRequestSize(request.size());
 
@@ -75,7 +75,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, AcceptsRequestWithBodySplitAcrossReadsAtExactLimit)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         constexpr std::string_view
             request = "POST /submit HTTP/1.1\r\nHost: example.com\r\nContent-Length: 4\r\n\r\nbody";
         session.SetMaxRequestSize(request.size());
@@ -88,7 +88,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, AcceptsChunkedBodySplitAcrossReadsAtExactLimit)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         constexpr std::string_view
             request = "POST /upload HTTP/1.1\r\nHost: example.com\r\n"
                       "Transfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n0\r\n\r\n";
@@ -102,7 +102,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, AcceptsPipelinedRequestsSplitAcrossReads)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         constexpr std::string_view
             firstRequest = "GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n";
         constexpr std::string_view
@@ -122,7 +122,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, RejectsMalformedRequest)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         constexpr std::string_view request = "G?T / HTTP/1.1\r\nHost: example.com\r\n\r\n";
 
         EXPECT_FALSE(session.OnBytes(std::as_bytes(std::span(request.data(), request.size()))));
@@ -130,7 +130,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, ZeroLimitRejectsNonEmptyInput)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         session.SetMaxRequestSize(0);
         constexpr std::string_view request = "G";
 
@@ -139,7 +139,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, RejectsPipelinedRequestsExceedingBufferLimit)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         constexpr std::string_view request = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
         constexpr std::string_view
             pipelinedRequests = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
@@ -153,7 +153,7 @@ namespace Flux::Test
 
     TEST(HttpSessionTest, ProcessesPipelinedRequestsWithinBufferLimit)
     {
-        HttpSession session;
+        HttpProtocolSession session;
         constexpr std::string_view
             pipelinedRequests = "GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n"
                                 "GET /second HTTP/1.1\r\nHost: example.com\r\n\r\n";
