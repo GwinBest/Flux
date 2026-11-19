@@ -5,10 +5,15 @@
 #include <functional>
 #include <span>
 
+#include "Utils/Error.hpp"
+
 namespace Flux
 {
     class IProtocolSession
     {
+    public:
+        using SendCallback = std::function<Result(std::vector<std::byte>&&)>;
+
     public:
         IProtocolSession() = default;
         IProtocolSession(const IProtocolSession&) = default;
@@ -23,11 +28,17 @@ namespace Flux
 
         [[nodiscard]] auto GetMaxRequestSize() const noexcept -> std::size_t;
 
+        auto SetSendCallback(const SendCallback& sendCallback) noexcept -> void;
+
     protected:
         auto BufferIncomingBytes(const std::span<const std::byte> bytes) -> bool;
 
+        auto SendToClient(std::vector<std::byte>&& data) const noexcept -> Result;
+
     protected:
         boost::beast::flat_buffer _leftoverBuffer;
+
+        SendCallback _sendCallback;
     };
 
     using SessionFactory = std::function<std::unique_ptr<IProtocolSession>()>;

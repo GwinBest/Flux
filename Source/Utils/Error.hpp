@@ -25,6 +25,7 @@ namespace Flux
         ConnectionException,
         ConnectionLimitReached,
         SendQueueFull,
+        NoSendCallback,
     };
 
     class ErrorCategory final : public boost::system::error_category
@@ -54,6 +55,7 @@ namespace Flux
             case Error::ConnectionException:      return "connection operation threw an exception";
             case Error::ConnectionLimitReached:   return "connection limit reached";
             case Error::SendQueueFull:            return "send queue full";
+            case Error::NoSendCallback:           return "no send callback";
             default:                              return "unknown error";
             }
         }

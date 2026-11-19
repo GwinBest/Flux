@@ -5,7 +5,7 @@
 #include <future>
 #include <utility>
 
-#include "Error.hpp"
+#include "Utils/Error.hpp"
 
 namespace Flux
 {

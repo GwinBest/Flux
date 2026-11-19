@@ -1,13 +1,16 @@
 #pragma once
 
+#include <any>
 #include <boost/asio/signal_set.hpp>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <tuple>
 
 #include "Core/Acceptor.hpp"
 #include "Core/IoContextPool.hpp"
@@ -24,22 +27,29 @@ namespace Flux
     public:
         ServerOptions() { SetProtocol<HttpProtocolSession>(); }
 
-        template<typename Protocol>
-        auto SetProtocol() -> void
+        template<typename Protocol, typename... Args>
+        void SetProtocol(Args&&... args)
         {
-            _protocol = [] -> std::unique_ptr<IProtocolSession> {
-                return std::make_unique<Protocol>();
+            auto tupleArgs = std::make_tuple(std::forward<Args>(args)...);
+            _sessionFactory =
+                [tuple = std::move(tupleArgs)] mutable -> std::unique_ptr<IProtocolSession> {
+                return std::apply(
+                    [](auto&&... unpacked)   // NOLINT(*-missing-std-forward)
+                    -> std::unique_ptr<IProtocolSession> {
+                        return std::make_unique<Protocol>(std::move(unpacked)...);
+                    },
+                    tuple);
             };
         }
 
         [[nodiscard]] auto GetProtocolFactory() const noexcept -> const SessionFactory&
         {
-            return _protocol;
+            return _sessionFactory;
         }
 
         [[nodiscard]] auto GetProtocol() const -> std::unique_ptr<IProtocolSession>
         {
-            return _protocol();
+            return _sessionFactory();
         }
 
     public:
@@ -49,7 +59,7 @@ namespace Flux
         ConnectionOptions ConnectionConfig {};
 
     private:
-        SessionFactory _protocol;
+        SessionFactory _sessionFactory;
     };
 
     class Server final

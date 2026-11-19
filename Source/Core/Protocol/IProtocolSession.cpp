@@ -17,6 +17,11 @@ namespace Flux
         return _leftoverBuffer.max_size();
     }
 
+    auto IProtocolSession::SetSendCallback(const SendCallback& sendCallback) noexcept -> void
+    {
+        _sendCallback = sendCallback;
+    }
+
     auto IProtocolSession::BufferIncomingBytes(const std::span<const std::byte> bytes) -> bool
     {
         if (bytes.empty())
@@ -38,5 +43,28 @@ namespace Flux
         _leftoverBuffer.commit(bytes.size());
 
         return true;
+    }
+
+    auto IProtocolSession::SendToClient(std::vector<std::byte>&& data) const noexcept -> Result
+    {
+        if (!_sendCallback)
+        {
+            ErrorLog("Attempted to send data, but send callback is not initialized");
+            return std::unexpected(MakeErrorCode(Error::NoSendCallback));
+        }
+
+        if (data.empty())
+        {
+            return {};
+        }
+
+        if (const auto result = _sendCallback(std::move(data)); !result)
+        {
+            ErrorLog("Failed to queue or write response data: {}", result.error().message());
+
+            return result;
+        }
+
+        return {};
     }
 }   // namespace Flux

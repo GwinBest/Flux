@@ -145,6 +145,14 @@ namespace Flux
         if (!_socket.is_open())
             return std::unexpected(ErrorCode(boost::asio::error::bad_descriptor));
 
+        if (_protocol)
+        {
+            _protocol->SetSendCallback(
+                [self = shared_from_this()](std::vector<std::byte>&& data) -> Result {
+                    return self->QueueSend(std::move(data));
+                });
+        }
+
         _status = Status::Started;
 
         RestartIdleTimer();

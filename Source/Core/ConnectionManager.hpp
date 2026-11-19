@@ -10,7 +10,7 @@
 #include <optional>
 #include <unordered_set>
 
-#include "Connection.hpp"
+#include "Core/Connection.hpp"
 #include "Utils/Error.hpp"
 #include "Utils/SystemResources.hpp"
 

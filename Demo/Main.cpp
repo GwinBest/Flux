@@ -1,7 +1,7 @@
 #include <cstdlib>
 #include <iostream>
 
-#include "Server.hpp"
+#include "../Source/Core/Server.hpp"
 
 auto main() -> int
 {
