@@ -34,9 +34,9 @@ namespace Flux
             _sessionFactory =
                 [tuple = std::move(tupleArgs)] mutable -> std::unique_ptr<IProtocolSession> {
                 return std::apply(
-                    [](auto&&... unpacked)   // NOLINT(*-missing-std-forward)
+                    []<typename... T>(T&&... unpacked)   // NOLINT(*-missing-std-forward)
                     -> std::unique_ptr<IProtocolSession> {
-                        return std::make_unique<Protocol>(std::move(unpacked)...);
+                        return std::make_unique<Protocol>(std::forward<T>(unpacked)...);
                     },
                     tuple);
             };
