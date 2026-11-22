@@ -56,10 +56,6 @@ enable_sanitizers(${PROJECT_NAME}-Tests)
 enable_coverage(${PROJECT_NAME}-Tests)
 enable_project_warnings(${PROJECT_NAME}-Tests)
 
-if (ENABLE_CLANG_TIDY AND PROJECT_CXX_CLANG_TIDY)
-    set_target_properties(${PROJECT_NAME}-Tests PROPERTIES CXX_CLANG_TIDY "${PROJECT_CXX_CLANG_TIDY}")
-endif ()
-
 include(GoogleTest)
 
 gtest_discover_tests(${PROJECT_NAME}-Tests
