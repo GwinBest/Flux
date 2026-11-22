@@ -2,6 +2,7 @@
 
 #include <source_location>
 #include <spdlog/spdlog.h>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -34,6 +35,12 @@ namespace Flux
         return {location.file_name(), static_cast<int>(location.line()), location.function_name()};
     }
 
+    inline auto GetLogMutex() noexcept -> std::mutex&
+    {
+        static std::mutex mutex;
+        return mutex;
+    }
+
     template<typename... Args>
     void WriteLog(const spdlog::level::level_enum level, const LogMessage message, Args&&... args)
     {
@@ -43,6 +50,7 @@ namespace Flux
             text = spdlog::fmt_lib::format(SPDLOG_FMT_RUNTIME(message.Text),
                                            std::forward<Args>(args)...);
 
+        const std::scoped_lock lock(GetLogMutex());
         spdlog::log(ToSpdlogSource(message.Location), level, "{}", text);
     }
 
