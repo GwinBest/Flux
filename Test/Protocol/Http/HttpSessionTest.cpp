@@ -475,7 +475,10 @@ namespace Flux::Test
         constexpr std::string_view request = "GET /notfound HTTP/1.1\r\nHost: example.com\r\n\r\n";
         EXPECT_TRUE(session.OnBytes(std::as_bytes(std::span(request.data(), request.size()))));
         // Response should contain 404
-        const std::string responseStr(receivedData.begin(), receivedData.end());
+        const std::string responseStr(std::string_view(
+            reinterpret_cast<const char*>(   // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                receivedData.data()),
+            receivedData.size()));
         EXPECT_TRUE(responseStr.contains("404"));
     }
 
@@ -680,7 +683,10 @@ namespace Flux::Test
         constexpr std::string_view request = "GET /test HTTP/1.1\r\nHost: example.com\r\n\r\n";
         EXPECT_TRUE(session.OnBytes(std::as_bytes(std::span(request.data(), request.size()))));
 
-        const std::string responseStr(receivedData.begin(), receivedData.end());
+        const std::string responseStr(std::string_view(
+            reinterpret_cast<const char*>(   // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                receivedData.data()),
+            receivedData.size()));
         EXPECT_TRUE(responseStr.contains("HTTP/1.1 200"));
     }
 
@@ -704,7 +710,10 @@ namespace Flux::Test
         constexpr std::string_view request = "GET /test HTTP/1.1\r\nHost: example.com\r\n\r\n";
         EXPECT_TRUE(session.OnBytes(std::as_bytes(std::span(request.data(), request.size()))));
 
-        const std::string responseStr(receivedData.begin(), receivedData.end());
+        const std::string responseStr(std::string_view(
+            reinterpret_cast<const char*>(   // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                receivedData.data()),
+            receivedData.size()));
         EXPECT_TRUE(responseStr.contains("Hello, World!"));
     }
 
@@ -992,7 +1001,10 @@ namespace Flux::Test
         constexpr std::string_view request = "GET /created HTTP/1.1\r\nHost: example.com\r\n\r\n";
         EXPECT_TRUE(session.OnBytes(std::as_bytes(std::span(request.data(), request.size()))));
 
-        const std::string responseStr(receivedData.begin(), receivedData.end());
+        const std::string responseStr(std::string_view(
+            reinterpret_cast<const char*>(   // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                receivedData.data()),
+            receivedData.size()));
         EXPECT_TRUE(responseStr.contains("201"));
     }
 
@@ -1020,7 +1032,10 @@ namespace Flux::Test
         constexpr std::string_view request = "GET /headers HTTP/1.1\r\nHost: example.com\r\n\r\n";
         EXPECT_TRUE(session.OnBytes(std::as_bytes(std::span(request.data(), request.size()))));
 
-        const std::string responseStr(receivedData.begin(), receivedData.end());
+        const std::string responseStr(std::string_view(
+            reinterpret_cast<const char*>(   // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                receivedData.data()),
+            receivedData.size()));
         EXPECT_TRUE(responseStr.contains("application/json"));
         EXPECT_TRUE(responseStr.contains("custom-value"));
     }
