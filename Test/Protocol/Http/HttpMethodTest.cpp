@@ -198,6 +198,7 @@ namespace Flux::Test
     TEST(HttpMethodTest, ToStringReturnsUnknownForCastedMaxValue)
     {
         // Cast max uint8_t value (255) to HttpMethod — should hit default case
+        // NOLINTNEXTLINE(optin.core.EnumCastOutOfRange)
         EXPECT_EQ(ToString(static_cast<HttpMethod>(std::numeric_limits<std::uint8_t>::max())),
                   "UNKNOWN");
     }
