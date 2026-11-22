@@ -1,5 +1,6 @@
 #pragma once
 
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/error.hpp>
 #include <future>

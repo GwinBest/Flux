@@ -6,6 +6,8 @@
 #include <limits>
 #include <system_error>
 
+#include "Utils/Error.hpp"
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -48,11 +50,11 @@ namespace Flux
         {
             if (bytesPerUnit == 0)
             {
-                return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+                return std::unexpected(MakeErrorCode(Error::InvalidArgument));
             }
             if (units > std::numeric_limits<std::uint64_t>::max() / bytesPerUnit)
             {
-                return std::unexpected(std::make_error_code(std::errc::result_out_of_range));
+                return std::unexpected(MakeErrorCode(Error::ResultOutOfRange));
             }
 
             return units * bytesPerUnit;
@@ -77,7 +79,7 @@ namespace Flux
                     std::string unit;
                     if (!(entry >> availableKiB >> unit) || unit != "kB")
                     {
-                        return std::unexpected(std::make_error_code(std::errc::io_error));
+                        return std::unexpected(MakeErrorCode(Error::IoError));
                     }
 
                     constexpr std::uint64_t bytesPerKiB = 1024;
@@ -113,7 +115,7 @@ namespace Flux
             if (pageResult != KERN_SUCCESS || statisticsResult != KERN_SUCCESS
                 || releaseResult != KERN_SUCCESS)
             {
-                return std::unexpected(std::make_error_code(std::errc::state_not_recoverable));
+                return std::unexpected(MakeErrorCode(Error::StateNotRecoverable));
             }
 
             const auto availablePages = static_cast<std::uint64_t>(memory.free_count)
@@ -156,7 +158,7 @@ namespace Flux
 
         return SystemResources {.FileDescriptorLimit = *fdLimit, .AvailableMemoryBytes = *availMem};
 #else
-        return std::unexpected(std::make_error_code(std::errc::function_not_supported));
+        return std::unexpected(MakeErrorCode(Error::FunctionNotSupported));
 #endif
     }
 }   // namespace Flux

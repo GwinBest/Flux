@@ -26,20 +26,30 @@ if (MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 endif ()
 
 add_executable(${PROJECT_NAME}-Tests
-        ServerTest.cpp
-        Core/AcceptorTest.cpp
-        Core/ConnectionManagerTest.cpp
-        Core/ConnectionTest.cpp
-        Core/ConnectionSendQueueTest.cpp
-        Core/ConnectionRequestSizeTest.cpp
-        Core/ConnectionIdleTimeoutTest.cpp
-        Core/HttpSessionTest.cpp
-        Core/IoContextPoolTest.cpp
+        Server/ServerTest.cpp
+        Networking/AcceptorTest.cpp
+        Networking/ConnectionManagerTest.cpp
+        Networking/ConnectionTest.cpp
+        Networking/ConnectionSendQueueTest.cpp
+        Networking/ConnectionRequestSizeTest.cpp
+        Networking/ConnectionIdleTimeoutTest.cpp
+        Networking/IoContextPoolTest.cpp
+        Networking/KeepAliveTest.cpp
+        Protocol/Http/HttpSessionTest.cpp
+        Protocol/Http/HttpRouterTest.cpp
+        Protocol/Http/HttpServerTest.cpp
+        Protocol/Http/HttpFieldTest.cpp
+        Protocol/Http/HttpMethodTest.cpp
+        Protocol/Http/HttpStatusTest.cpp
+        Protocol/Http/HttpRequestTest.cpp
+        Protocol/Http/HttpResponseTest.cpp
+        Utils/AsyncTest.cpp
         Utils/ErrorTest.cpp
         Utils/LogTest.cpp
         Utils/SystemResourcesTest.cpp
 )
 
+target_include_directories(${PROJECT_NAME}-Tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(${PROJECT_NAME}-Tests PRIVATE ${PROJECT_NAME} GTest::gtest_main spdlog::spdlog)
 
 enable_sanitizers(${PROJECT_NAME}-Tests)
@@ -58,22 +68,3 @@ gtest_discover_tests(${PROJECT_NAME}-Tests
         PROPERTIES TIMEOUT 15 LABELS unit
 )
 
-# ConfigureKeepAlive has internal linkage. Its tests include Acceptor.cpp in a
-# separate executable so production code needs no test hooks or public API changes.
-add_executable(${PROJECT_NAME}-KeepAliveTests Core/KeepAliveTest.cpp)
-target_link_libraries(${PROJECT_NAME}-KeepAliveTests
-        PRIVATE ${PROJECT_NAME} GTest::gtest_main spdlog::spdlog
-)
-enable_sanitizers(${PROJECT_NAME}-KeepAliveTests)
-enable_coverage(${PROJECT_NAME}-KeepAliveTests)
-enable_project_warnings(${PROJECT_NAME}-KeepAliveTests)
-if (ENABLE_CLANG_TIDY AND PROJECT_CXX_CLANG_TIDY)
-    set_target_properties(${PROJECT_NAME}-KeepAliveTests
-            PROPERTIES CXX_CLANG_TIDY "${PROJECT_CXX_CLANG_TIDY}"
-    )
-endif ()
-gtest_discover_tests(${PROJECT_NAME}-KeepAliveTests
-        DISCOVERY_MODE PRE_TEST
-        DISCOVERY_TIMEOUT 10
-        PROPERTIES TIMEOUT 15 LABELS unit
-)
