@@ -691,7 +691,9 @@ namespace Flux::Test
     TEST(HttpFieldTest, ToStringReturnsEmptyForCastedMaxValue)
     {
         // Cast a value beyond the last defined enum value to HttpField — should hit default case
+        // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
         EXPECT_EQ(ToString(static_cast<HttpField>(131)), "");
+        // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
     }
 
     TEST(HttpFieldTest, ToStringReturnsEmptyForCastedZero)
