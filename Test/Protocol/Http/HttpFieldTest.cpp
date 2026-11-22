@@ -690,8 +690,8 @@ namespace Flux::Test
 
     TEST(HttpFieldTest, ToStringReturnsEmptyForCastedMaxValue)
     {
-        // Cast max uint8_t value (255) to HttpField — should hit default case
-        EXPECT_EQ(ToString(static_cast<HttpField>(std::numeric_limits<std::uint8_t>::max())), "");
+        // Cast a value beyond the last defined enum value to HttpField — should hit default case
+        EXPECT_EQ(ToString(static_cast<HttpField>(131)), "");
     }
 
     TEST(HttpFieldTest, ToStringReturnsEmptyForCastedZero)
