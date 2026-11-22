@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <string>
+#include <utility>
 
 namespace Flux
 {
@@ -25,6 +26,12 @@ namespace Flux
         ConnectionException,
         ConnectionLimitReached,
         SendQueueFull,
+        NoSendCallback,
+        InvalidArgument,
+        ResultOutOfRange,
+        IoError,
+        StateNotRecoverable,
+        FunctionNotSupported,
     };
 
     class ErrorCategory final : public boost::system::error_category
@@ -54,6 +61,12 @@ namespace Flux
             case Error::ConnectionException:      return "connection operation threw an exception";
             case Error::ConnectionLimitReached:   return "connection limit reached";
             case Error::SendQueueFull:            return "send queue full";
+            case Error::NoSendCallback:           return "no send callback";
+            case Error::InvalidArgument:          return "invalid argument";
+            case Error::ResultOutOfRange:         return "result out of range";
+            case Error::IoError:                  return "I/O error";
+            case Error::StateNotRecoverable:      return "state not recoverable";
+            case Error::FunctionNotSupported:     return "function not supported";
             default:                              return "unknown error";
             }
         }
@@ -67,7 +80,7 @@ namespace Flux
 
     [[nodiscard]] inline auto MakeErrorCode(const Error error) noexcept -> boost::system::error_code
     {
-        return {static_cast<int>(error), GetErrorCategory()};
+        return {std::to_underlying(error), GetErrorCategory()};
     }
 
     using ErrorCode = boost::system::error_code;

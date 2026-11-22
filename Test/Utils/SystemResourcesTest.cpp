@@ -6,7 +6,7 @@
 #include <limits>
 #include <system_error>
 
-#include "Core/ConnectionManager.hpp"
+#include "Networking/ConnectionManager.hpp"
 
 #if defined(__linux__) || defined(__APPLE__)
 #include <sys/resource.h>

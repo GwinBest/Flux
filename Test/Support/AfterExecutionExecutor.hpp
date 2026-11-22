@@ -28,7 +28,7 @@ namespace Flux::Test
         {
             _executor.execute([afterNext = _afterNext,
                                function = std::forward<Function>(function)] mutable -> void {
-                auto observer = std::exchange(*afterNext, {});
+                const auto observer = std::exchange(*afterNext, {});
                 function();
                 if (observer)
                     observer();
