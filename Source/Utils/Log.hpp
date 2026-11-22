@@ -1,8 +1,8 @@
 #pragma once
 
+#include <mutex>
 #include <source_location>
 #include <spdlog/spdlog.h>
-#include <mutex>
 #include <string>
 #include <string_view>
 #include <type_traits>
